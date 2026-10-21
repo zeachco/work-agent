@@ -14,7 +14,7 @@ and rejects unknown keys, so only use the fields below.
 1. Read `crons.json` (copy `crons.example.json` to it if missing).
 2. Append a task object to `tasks`.
 3. Validate: `cargo run -- check`.
-4. Confirm the schedule: `cargo run -- list` (shows last / next run).
+4. Confirm the schedule: `cargo run -- list` (shows last / next run; manual tasks show `manual`).
 5. Optionally force a run: `cargo run -- run <name>`.
 
 The running daemon reloads nothing: restart it after editing the config.
@@ -24,7 +24,7 @@ The running daemon reloads nothing: restart it after editing the config.
 | field | required | meaning |
 |---|---|---|
 | `name` | yes | unique, `[a-z][a-z0-9_-]{0,31}`; also the herdr agent name |
-| `schedule` | yes | cron, 5 fields `m h dom mon dow` or 6 fields with leading seconds |
+| `schedule` | no | cron, 5 fields `m h dom mon dow` or 6 fields with leading seconds. Omit it for a **manual task**: never run by the daemon, only via `cargo run -- run <name>` |
 | `prompt` | yes | what the agent does; supports placeholders (below) |
 | `cwd` | no | directory the harness starts in (falls back to `defaults.cwd`) |
 | `harness` | no | `pi` (default), `claude`, `codex`, ... anything `herdr agent start --kind` accepts |
@@ -55,10 +55,28 @@ config list), `${task}` (task name).
 }
 ```
 
+## Manual task example
+
+Same fields, no `schedule`; the user starts it on demand.
+
+```json
+{
+  "name": "release-notes",
+  "harness": "claude",
+  "args": ["--model", "claude-sonnet-5-5"],
+  "cwd": "/Users/olivier/dev/frontend",
+  "prompt": "Draft release notes from the commits since the last tag into release-notes-${date}.md."
+}
+```
+
 ## Gotchas
 
-- A task that has never run is due immediately at the next tick. Set
-  `"enabled": false` while drafting if that is unwanted.
+- When the user wants a task they trigger themselves ("on demand", "manual",
+  "not on a cron"), omit `schedule` rather than using `enabled: false`:
+  disabled tasks cannot be run at all, manual ones can.
+
+- A scheduled task that has never run is due immediately at the next tick.
+  Set `"enabled": false` while drafting if that is unwanted.
 - `args` is a full override, not a merge: repeat `--model` if you need it.
 - `exception` is only a guard; if the local LLM at `exception_llm.base_url`
   is unreachable, the task runs anyway.

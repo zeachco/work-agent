@@ -12,6 +12,7 @@ cp crons.example.json crons.json   # edit tasks
 cargo run -- check                 # validate config
 cargo run -- list                  # show schedule / last run / next run
 cargo run -- run daily-standup-notes   # force one task now
+cargo run -- run release-notes         # start a manual task (no schedule)
 cargo run                          # daemon (same as `cargo run -- daemon`)
 ```
 
@@ -35,9 +36,13 @@ the default `herdr` runner.
 | `defaults.fresh_workspace` | always create a new workspace labelled `cron:<name>:<MM-DD HH:MM>` instead of reusing the task's (default `false`) |
 | `exception_llm` | OpenAI-compatible endpoint used to evaluate `exception` rules |
 
-Per task: `name`, `schedule` (5 or 6 field cron), `prompt`, optional
+Per task: `name`, `prompt`, optional `schedule` (5 or 6 field cron),
 `harness`, `args`, `cwd`, `parallel` (default false), `exception`, `runner`,
 `timeout_seconds`, `close_workspace_on_done`, `fresh_workspace`, `enabled`.
+
+A task without `schedule` is a **manual task**: it is configured like any
+other but the daemon never starts it. Only `work-agent run <name>` does.
+`list` shows it as `manual`.
 
 Prompts and exception rules accept `${date}`, `${time}`, `${datetime}`,
 `${weekday}`, `${holidays}`, `${task}`.

@@ -113,7 +113,9 @@ pub struct Task {
     #[serde(default)]
     pub parallel: bool,
     /// 5-field (`m h dom mon dow`) or 6-field (`s m h dom mon dow`) cron expression.
-    pub schedule: String,
+    /// Omit it for a manual task: never scheduled by the daemon, only started
+    /// with `work-agent run <name>`.
+    pub schedule: Option<String>,
     /// Optional small prompt evaluated by the local LLM; a "yes" answer skips this run.
     pub exception: Option<String>,
     pub runner: Option<Runner>,
@@ -151,8 +153,10 @@ impl Config {
         for t in &self.tasks {
             anyhow::ensure!(seen.insert(&t.name), "duplicate task name `{}`", t.name);
             anyhow::ensure!(valid_name(&t.name), "task name `{}` must match [a-z][a-z0-9_-]{{0,31}}", t.name);
-            crate::schedule::parse(&t.schedule)
-                .with_context(|| format!("task `{}` has an invalid schedule", t.name))?;
+            if let Some(schedule) = &t.schedule {
+                crate::schedule::parse(schedule)
+                    .with_context(|| format!("task `{}` has an invalid schedule", t.name))?;
+            }
         }
         Ok(())
     }
@@ -174,7 +178,8 @@ pub struct ResolvedTask {
     pub prompt: String,
     pub cwd: PathBuf,
     pub parallel: bool,
-    pub schedule: String,
+    /// `None` means manual: only `run <name>` starts it.
+    pub schedule: Option<String>,
     pub exception: Option<String>,
     pub runner: Runner,
     pub timeout_seconds: u64,

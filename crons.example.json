@@ -38,6 +38,13 @@
       "schedule": "0 2 * * *",
       "runner": "process",
       "prompt": "Delete build artifacts older than 7 days under ~/dev/*/target."
+    },
+    {
+      "name": "release-notes",
+      "harness": "claude",
+      "args": ["--model", "claude-sonnet-5-5"],
+      "cwd": "/Users/olivier/dev/frontend",
+      "prompt": "Draft release notes from the commits since the last tag into release-notes-${date}.md."
     }
   ]
 }

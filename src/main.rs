@@ -32,6 +32,7 @@ enum Cmd {
     /// Print each task with its next due time and exit.
     List,
     /// Run one task immediately, ignoring its schedule and exception rule.
+    /// This is the only way to start a task that has no `schedule` (manual task).
     Run { name: String },
     /// Validate the config and exit.
     Check,
@@ -54,12 +55,14 @@ async fn main() -> Result<()> {
             let now = Local::now();
             for t in cfg.resolved_tasks() {
                 let last = store.last_run(&t.name);
-                let due = schedule::is_due(&t.schedule, last, now)?;
-                let next = schedule::parse(&t.schedule)?.after(&last.unwrap_or(now)).next();
+                let (due, next) = match &t.schedule {
+                    Some(s) => (schedule::is_due(s, last, now)?, schedule::parse(s)?.after(&last.unwrap_or(now)).next()),
+                    None => (false, None),
+                };
                 println!(
                     "{:<24} {:<16} harness={:<7} parallel={:<5} last={} next={} {}",
                     t.name,
-                    t.schedule,
+                    t.schedule.as_deref().unwrap_or("manual"),
                     t.harness,
                     t.parallel,
                     last.map(|d| d.to_rfc3339()).unwrap_or_else(|| "never".into()),
@@ -92,9 +95,11 @@ async fn daemon(cfg: Config) -> Result<()> {
         // One full pass over the tasks, in config order. Serial tasks block the
         // pass; `parallel: true` tasks are detached and the pass moves on.
         for task in cfg.resolved_tasks() {
+            // Manual tasks (no schedule) are never due here; only `run <name>` starts them.
+            let Some(expr) = task.schedule.as_deref() else { continue };
             let due = {
                 let s = store.lock().await;
-                match schedule::is_due(&task.schedule, s.last_run(&task.name), Local::now()) {
+                match schedule::is_due(expr, s.last_run(&task.name), Local::now()) {
                     Ok(d) => d,
                     Err(e) => { error!(task = %task.name, "schedule error: {e:#}"); false }
                 }
