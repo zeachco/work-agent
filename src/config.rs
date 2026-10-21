@@ -45,6 +45,10 @@ pub struct Defaults {
     /// Close the herdr workspace once the agent settles.
     #[serde(default)]
     pub close_workspace_on_done: bool,
+    /// Always spawn a new workspace labelled `cron:<name>:<date time>` instead
+    /// of reusing the task's existing one.
+    #[serde(default)]
+    pub fresh_workspace: bool,
 }
 
 impl Default for Defaults {
@@ -56,6 +60,7 @@ impl Default for Defaults {
             runner: Runner::default(),
             timeout_seconds: default_timeout(),
             close_workspace_on_done: false,
+            fresh_workspace: false,
         }
     }
 }
@@ -114,6 +119,7 @@ pub struct Task {
     pub runner: Option<Runner>,
     pub timeout_seconds: Option<u64>,
     pub close_workspace_on_done: Option<bool>,
+    pub fresh_workspace: Option<bool>,
 }
 
 fn default_tick() -> u64 { 60 }
@@ -173,6 +179,7 @@ pub struct ResolvedTask {
     pub runner: Runner,
     pub timeout_seconds: u64,
     pub close_workspace_on_done: bool,
+    pub fresh_workspace: bool,
 }
 
 impl Config {
@@ -197,6 +204,7 @@ impl Config {
                 runner: t.runner.unwrap_or(d.runner),
                 timeout_seconds: t.timeout_seconds.unwrap_or(d.timeout_seconds),
                 close_workspace_on_done: t.close_workspace_on_done.unwrap_or(d.close_workspace_on_done),
+                fresh_workspace: t.fresh_workspace.unwrap_or(d.fresh_workspace),
             })
             .collect()
     }

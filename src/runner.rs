@@ -17,6 +17,14 @@ pub async fn run(task: &ResolvedTask, prompt: &str) -> Result<String> {
 /// is still alive, otherwise reuses the `cron:<name>` workspace if it is still
 /// open, and only creates a fresh workspace when neither exists.
 async fn run_herdr(task: &ResolvedTask, prompt: &str) -> Result<String> {
+    if task.fresh_workspace {
+        let stamp = chrono::Local::now();
+        let label = format!("{}:{}", workspace_label(&task.name), stamp.format("%m-%d %H:%M"));
+        let agent = format!("{}-{}", task.name, stamp.format("%m%d-%H%M"));
+        let (ws, pane) = create_workspace(task, &label).await?;
+        start_agent(task, &agent, &pane).await?;
+        return prompt_and_finish(task, &agent, &ws, prompt).await;
+    }
     let workspace_id = match find_agent(&task.name).await? {
         Some(agent) => {
             let status = pick(&agent, &["agent_status"]).unwrap_or_default();
@@ -34,15 +42,19 @@ async fn run_herdr(task: &ResolvedTask, prompt: &str) -> Result<String> {
                     tracing::info!(task = %task.name, workspace_id = %ws, pane_id = %pane, "reusing herdr workspace");
                     (ws, pane)
                 }
-                None => create_workspace(task).await?,
+                None => create_workspace(task, &workspace_label(&task.name)).await?,
             };
-            start_agent(task, &pane).await?;
+            start_agent(task, &task.name, &pane).await?;
             ws
         }
     };
+    prompt_and_finish(task, &task.name, &workspace_id, prompt).await
+}
+
+async fn prompt_and_finish(task: &ResolvedTask, agent: &str, workspace_id: &str, prompt: &str) -> Result<String> {
     let timeout_ms = (task.timeout_seconds * 1000).to_string();
     let result = herdr_json(&[
-        "agent", "prompt", &task.name, prompt,
+        "agent", "prompt", agent, prompt,
         "--wait", "--timeout", &timeout_ms,
     ])
     .await;
@@ -55,7 +67,7 @@ async fn run_herdr(task: &ResolvedTask, prompt: &str) -> Result<String> {
     };
 
     if task.close_workspace_on_done {
-        if let Err(e) = herdr_json(&["workspace", "close", &workspace_id]).await {
+        if let Err(e) = herdr_json(&["workspace", "close", workspace_id]).await {
             tracing::warn!(task = %task.name, "failed to close workspace: {e:#}");
         }
     }
@@ -109,11 +121,11 @@ async fn shell_pane(workspace_id: &str, task: &ResolvedTask) -> Result<String> {
         .context("pane id missing in herdr split response")
 }
 
-async fn create_workspace(task: &ResolvedTask) -> Result<(String, String)> {
+async fn create_workspace(task: &ResolvedTask, label: &str) -> Result<(String, String)> {
     let ws = herdr_json(&[
         "workspace", "create",
         "--cwd", &task.cwd.to_string_lossy(),
-        "--label", &workspace_label(&task.name),
+        "--label", label,
         "--no-focus",
     ])
     .await
@@ -128,9 +140,9 @@ async fn create_workspace(task: &ResolvedTask) -> Result<(String, String)> {
     Ok((workspace_id, pane_id))
 }
 
-async fn start_agent(task: &ResolvedTask, pane_id: &str) -> Result<()> {
+async fn start_agent(task: &ResolvedTask, agent: &str, pane_id: &str) -> Result<()> {
     let mut start = vec![
-        "agent".to_string(), "start".into(), task.name.clone(),
+        "agent".to_string(), "start".into(), agent.to_string(),
         "--kind".into(), task.harness.clone(),
         "--pane".into(), pane_id.to_string(),
     ];

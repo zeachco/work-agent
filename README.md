@@ -32,11 +32,12 @@ the default `herdr` runner.
 | `defaults.runner` | `herdr` (workspace + interactive agent) or `process` (`harness -p prompt`) |
 | `defaults.timeout_seconds` | max wall-clock per run |
 | `defaults.close_workspace_on_done` | close the herdr workspace once the agent settles |
+| `defaults.fresh_workspace` | always create a new workspace labelled `cron:<name>:<MM-DD HH:MM>` instead of reusing the task's (default `false`) |
 | `exception_llm` | OpenAI-compatible endpoint used to evaluate `exception` rules |
 
 Per task: `name`, `schedule` (5 or 6 field cron), `prompt`, optional
 `harness`, `args`, `cwd`, `parallel` (default false), `exception`, `runner`,
-`timeout_seconds`, `close_workspace_on_done`, `enabled`.
+`timeout_seconds`, `close_workspace_on_done`, `fresh_workspace`, `enabled`.
 
 Prompts and exception rules accept `${date}`, `${time}`, `${datetime}`,
 `${weekday}`, `${holidays}`, `${task}`.
@@ -45,5 +46,5 @@ Prompts and exception rules accept `${date}`, `${time}`, `${datetime}`,
 
 1. A task is due when a cron tick has elapsed since `last_run` (never-run tasks are due immediately).
 2. If it has an `exception`, the rendered rule is sent to the local model, which answers `SKIP` or `RUN`. An unreachable model never blocks a run.
-3. `herdr workspace create --cwd <cwd>` → `herdr agent start <name> --kind <harness> -- <args>` → `herdr agent prompt <name> "<prompt>" --wait`.
+3. If an agent named `<name>` is still alive it is prompted directly (a run is refused while it is still `working`). Otherwise the `cron:<name>` workspace is reused when still open (a free pane, or a new split), and only then `herdr workspace create --cwd <cwd>`. Then `herdr agent start <name> --kind <harness> -- <args>` → `herdr agent prompt <name> "<prompt>" --wait`. With `fresh_workspace: true` every run gets its own `cron:<name>:<MM-DD HH:MM>` workspace and agent.
 4. The outcome is written to the state file and the loop moves to the next task.
