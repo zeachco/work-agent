@@ -126,15 +126,33 @@ pub struct Task {
     pub fresh_workspace: Option<bool>,
 }
 
-fn default_tick() -> u64 { 60 }
-fn default_state_file() -> PathBuf { PathBuf::from("state.json") }
-fn default_harness() -> String { "pi".into() }
-fn default_args() -> Vec<String> { vec!["--model".into(), "llamacpp/gemma-4-E4B-it".into()] }
-fn default_timeout() -> u64 { 3600 }
-fn default_llm_url() -> String { "http://localhost:7070/v1".into() }
-fn default_llm_model() -> String { "gemma-4-E4B-it".into() }
-fn default_llm_timeout() -> u64 { 60 }
-fn default_true() -> bool { true }
+fn default_tick() -> u64 {
+    60
+}
+fn default_state_file() -> PathBuf {
+    PathBuf::from("state.json")
+}
+fn default_harness() -> String {
+    "pi".into()
+}
+fn default_args() -> Vec<String> {
+    vec!["--model".into(), "llamacpp/gemma-4-E4B-it".into()]
+}
+fn default_timeout() -> u64 {
+    3600
+}
+fn default_llm_url() -> String {
+    "http://localhost:7070/v1".into()
+}
+fn default_llm_model() -> String {
+    "gemma-4-E4B-it".into()
+}
+fn default_llm_timeout() -> u64 {
+    60
+}
+fn default_true() -> bool {
+    true
+}
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
@@ -154,7 +172,11 @@ impl Config {
         let mut seen = std::collections::HashSet::new();
         for t in &self.tasks {
             anyhow::ensure!(seen.insert(&t.name), "duplicate task name `{}`", t.name);
-            anyhow::ensure!(valid_name(&t.name), "task name `{}` must match [a-z][a-z0-9_-]{{0,31}}", t.name);
+            anyhow::ensure!(
+                valid_name(&t.name),
+                "task name `{}` must match [a-z][a-z0-9_-]{{0,31}}",
+                t.name
+            );
             if let Some(schedule) = &t.schedule {
                 crate::schedule::parse(schedule)
                     .with_context(|| format!("task `{}` has an invalid schedule", t.name))?;
@@ -218,17 +240,17 @@ impl Config {
                 harness: t.harness.clone().unwrap_or_else(|| d.harness.clone()),
                 args: t.args.clone().unwrap_or_else(|| d.args.clone()),
                 prompt: t.prompt.clone(),
-                cwd: t
-                    .cwd
-                    .clone()
-                    .or_else(|| d.cwd.clone())
-                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
+                cwd: t.cwd.clone().or_else(|| d.cwd.clone()).unwrap_or_else(|| {
+                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+                }),
                 parallel: t.parallel,
                 schedule: t.schedule.clone(),
                 exception: t.exception.clone(),
                 runner: t.runner.unwrap_or(d.runner),
                 timeout_seconds: t.timeout_seconds.unwrap_or(d.timeout_seconds),
-                close_workspace_on_done: t.close_workspace_on_done.unwrap_or(d.close_workspace_on_done),
+                close_workspace_on_done: t
+                    .close_workspace_on_done
+                    .unwrap_or(d.close_workspace_on_done),
                 fresh_workspace: t.fresh_workspace.unwrap_or(d.fresh_workspace),
             })
             .collect()
