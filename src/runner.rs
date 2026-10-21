@@ -13,37 +13,33 @@ pub async fn run(task: &ResolvedTask, prompt: &str) -> Result<String> {
     }
 }
 
-/// Spawns a herdr workspace rooted at the task cwd, starts the interactive
-/// harness in it, submits the prompt and waits for the agent to settle.
+/// Runs the task inside herdr. Reuses the agent named after the task if it
+/// is still alive, otherwise reuses the `cron:<name>` workspace if it is still
+/// open, and only creates a fresh workspace when neither exists.
 async fn run_herdr(task: &ResolvedTask, prompt: &str) -> Result<String> {
-    let ws = herdr_json(&[
-        "workspace", "create",
-        "--cwd", &task.cwd.to_string_lossy(),
-        "--label", &format!("cron:{}", task.name),
-        "--no-focus",
-    ])
-    .await
-    .context("herdr workspace create")?;
-    let workspace_id = pick(&ws, &["result", "workspace", "workspace_id"])
-        .or_else(|| pick(&ws, &["result", "workspace", "id"]))
-        .context("workspace id missing in herdr response")?;
-    let pane_id = pick(&ws, &["result", "root_pane", "pane_id"])
-        .or_else(|| pick(&ws, &["result", "root_pane", "id"]))
-        .context("root pane id missing in herdr response")?;
-    tracing::info!(task = %task.name, %workspace_id, %pane_id, "herdr workspace created");
-
-    let mut start = vec![
-        "agent".to_string(), "start".into(), task.name.clone(),
-        "--kind".into(), task.harness.clone(),
-        "--pane".into(), pane_id.clone(),
-    ];
-    if !task.args.is_empty() {
-        start.push("--".into());
-        start.extend(task.args.iter().cloned());
-    }
-    let start_refs: Vec<&str> = start.iter().map(String::as_str).collect();
-    herdr_json(&start_refs).await.context("herdr agent start")?;
-
+    let workspace_id = match find_agent(&task.name).await? {
+        Some(agent) => {
+            let status = pick(&agent, &["agent_status"]).unwrap_or_default();
+            if status == "working" {
+                bail!("agent `{}` is still working on a previous run", task.name);
+            }
+            let ws = pick(&agent, &["workspace_id"]).context("agent has no workspace_id")?;
+            tracing::info!(task = %task.name, workspace_id = %ws, %status, "reusing running herdr agent");
+            ws
+        }
+        None => {
+            let (ws, pane) = match find_workspace(&task.name).await? {
+                Some(ws) => {
+                    let pane = shell_pane(&ws, task).await?;
+                    tracing::info!(task = %task.name, workspace_id = %ws, pane_id = %pane, "reusing herdr workspace");
+                    (ws, pane)
+                }
+                None => create_workspace(task).await?,
+            };
+            start_agent(task, &pane).await?;
+            ws
+        }
+    };
     let timeout_ms = (task.timeout_seconds * 1000).to_string();
     let result = herdr_json(&[
         "agent", "prompt", &task.name, prompt,
@@ -64,6 +60,86 @@ async fn run_herdr(task: &ResolvedTask, prompt: &str) -> Result<String> {
         }
     }
     result.map(|_| outcome)
+}
+
+fn workspace_label(name: &str) -> String {
+    format!("cron:{name}")
+}
+
+/// The agent registered under the task name, if any.
+async fn find_agent(name: &str) -> Result<Option<Value>> {
+    let v = herdr_json(&["agent", "list"]).await.context("herdr agent list")?;
+    Ok(v.pointer("/result/agents")
+        .and_then(Value::as_array)
+        .and_then(|a| a.iter().find(|a| a.get("name").and_then(Value::as_str) == Some(name)).cloned()))
+}
+
+/// The workspace labelled `cron:<name>`, if it is still open.
+async fn find_workspace(name: &str) -> Result<Option<String>> {
+    let label = workspace_label(name);
+    let v = herdr_json(&["workspace", "list"]).await.context("herdr workspace list")?;
+    Ok(v.pointer("/result/workspaces")
+        .and_then(Value::as_array)
+        .and_then(|ws| ws.iter().find(|w| w.get("label").and_then(Value::as_str) == Some(&label)))
+        .and_then(|w| pick(w, &["workspace_id"])))
+}
+
+/// A pane at a shell prompt inside `workspace_id`: the first pane without an
+/// agent, or a fresh split when every pane is busy.
+async fn shell_pane(workspace_id: &str, task: &ResolvedTask) -> Result<String> {
+    let v = herdr_json(&["pane", "list", "--workspace", workspace_id]).await.context("herdr pane list")?;
+    let panes = v.pointer("/result/panes").and_then(Value::as_array).cloned().unwrap_or_default();
+    let free = panes.iter().find(|p| {
+        let status = p.get("agent_status").and_then(Value::as_str).unwrap_or("unknown");
+        status == "unknown" || status == "none"
+    });
+    if let Some(p) = free.and_then(|p| pick(p, &["pane_id"])) {
+        return Ok(p);
+    }
+    let anchor = panes.first().and_then(|p| pick(p, &["pane_id"])).context("workspace has no panes")?;
+    let split = herdr_json(&[
+        "pane", "split", &anchor,
+        "--direction", "down",
+        "--cwd", &task.cwd.to_string_lossy(),
+    ])
+    .await
+    .context("herdr pane split")?;
+    pick(&split, &["result", "pane", "pane_id"])
+        .or_else(|| pick(&split, &["result", "pane_id"]))
+        .context("pane id missing in herdr split response")
+}
+
+async fn create_workspace(task: &ResolvedTask) -> Result<(String, String)> {
+    let ws = herdr_json(&[
+        "workspace", "create",
+        "--cwd", &task.cwd.to_string_lossy(),
+        "--label", &workspace_label(&task.name),
+        "--no-focus",
+    ])
+    .await
+    .context("herdr workspace create")?;
+    let workspace_id = pick(&ws, &["result", "workspace", "workspace_id"])
+        .or_else(|| pick(&ws, &["result", "workspace", "id"]))
+        .context("workspace id missing in herdr response")?;
+    let pane_id = pick(&ws, &["result", "root_pane", "pane_id"])
+        .or_else(|| pick(&ws, &["result", "root_pane", "id"]))
+        .context("root pane id missing in herdr response")?;
+    tracing::info!(task = %task.name, %workspace_id, %pane_id, "herdr workspace created");
+    Ok((workspace_id, pane_id))
+}
+
+async fn start_agent(task: &ResolvedTask, pane_id: &str) -> Result<()> {
+    let mut start = vec![
+        "agent".to_string(), "start".into(), task.name.clone(),
+        "--kind".into(), task.harness.clone(),
+        "--pane".into(), pane_id.to_string(),
+    ];
+    if !task.args.is_empty() {
+        start.push("--".into());
+        start.extend(task.args.iter().cloned());
+    }
+    let start_refs: Vec<&str> = start.iter().map(String::as_str).collect();
+    herdr_json(&start_refs).await.context("herdr agent start").map(|_| ())
 }
 
 /// Fallback when herdr is not wanted: run the harness non-interactively.
