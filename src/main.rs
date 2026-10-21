@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 #[derive(Parser)]
-#[command(name = "crons", version, about = "Scheduled agent-task orchestrator")]
+#[command(name = "work-agent", version, about = "Scheduled agent-task orchestrator")]
 struct Cli {
     /// Path to the JSON config.
     #[arg(short, long, default_value = "crons.json", env = "CRONS_CONFIG")]
@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
 async fn daemon(cfg: Config) -> Result<()> {
     let store = Arc::new(Mutex::new(Store::load(&cfg.state_file)?));
     let cfg = Arc::new(cfg);
-    info!(tasks = cfg.tasks.len(), tick = cfg.tick_seconds, "crons daemon started");
+    info!(tasks = cfg.tasks.len(), tick = cfg.tick_seconds, "work-agent daemon started");
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
     loop {
         ticker.tick().await;

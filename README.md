@@ -1,4 +1,4 @@
-# crons
+# work-agent
 
 A small daemon that cycles through scheduled agent tasks and runs each one
 through a coding harness (`pi` by default, `claude`, or anything `herdr`

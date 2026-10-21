@@ -1,5 +1,5 @@
 [package]
-name = "crons"
+name = "work-agent"
 version = "0.1.0"
 edition = "2021"
 description = "Daemon that cycles through scheduled agent tasks and runs them through a harness (pi, claude, ...) inside herdr workspaces"
