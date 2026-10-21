@@ -26,6 +26,7 @@ The running daemon reloads nothing: restart it after editing the config.
 | `name` | yes | unique, `[a-z][a-z0-9_-]{0,31}`; also the herdr agent name |
 | `schedule` | no | cron, 5 fields `m h dom mon dow` or 6 fields with leading seconds. Omit it for a **manual task**: never run by the daemon, only via `cargo run -- run <name>` |
 | `prompt` | yes | what the agent does; supports placeholders (below) |
+| `description` | no | one-line summary shown by `cargo run -- run` (no name), which lists all runnable tasks |
 | `cwd` | no | directory the harness starts in (falls back to `defaults.cwd`) |
 | `harness` | no | `pi` (default), `claude`, `codex`, ... anything `herdr agent start --kind` accepts |
 | `args` | no | replaces `defaults.args` entirely, e.g. `["--model", "claude-sonnet-5-5"]` |
@@ -62,6 +63,7 @@ Same fields, no `schedule`; the user starts it on demand.
 ```json
 {
   "name": "release-notes",
+  "description": "Draft release notes for the frontend since the last tag",
   "harness": "claude",
   "args": ["--model", "claude-sonnet-5-5"],
   "cwd": "/Users/olivier/dev/frontend",

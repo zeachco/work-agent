@@ -101,6 +101,8 @@ pub struct Task {
     pub name: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Free-text summary shown by `run` with no task name.
+    pub description: Option<String>,
     /// Harness executable override.
     pub harness: Option<String>,
     /// Harness argument override (replaces defaults.args).
@@ -162,6 +164,22 @@ impl Config {
     }
 }
 
+impl ResolvedTask {
+    /// The value following `--model` in the harness args, if any.
+    pub fn model(&self) -> Option<&str> {
+        let mut it = self.args.iter();
+        while let Some(a) = it.next() {
+            if a == "--model" {
+                return it.next().map(String::as_str);
+            }
+            if let Some(m) = a.strip_prefix("--model=") {
+                return Some(m);
+            }
+        }
+        None
+    }
+}
+
 fn valid_name(s: &str) -> bool {
     let mut chars = s.chars();
     matches!(chars.next(), Some('a'..='z'))
@@ -173,6 +191,7 @@ fn valid_name(s: &str) -> bool {
 #[derive(Debug, Clone)]
 pub struct ResolvedTask {
     pub name: String,
+    pub description: Option<String>,
     pub harness: String,
     pub args: Vec<String>,
     pub prompt: String,
@@ -195,6 +214,7 @@ impl Config {
             .filter(|t| t.enabled)
             .map(|t| ResolvedTask {
                 name: t.name.clone(),
+                description: t.description.clone(),
                 harness: t.harness.clone().unwrap_or_else(|| d.harness.clone()),
                 args: t.args.clone().unwrap_or_else(|| d.args.clone()),
                 prompt: t.prompt.clone(),

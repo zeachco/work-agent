@@ -41,6 +41,7 @@
     },
     {
       "name": "release-notes",
+      "description": "Draft release notes for the frontend since the last tag",
       "harness": "claude",
       "args": ["--model", "claude-sonnet-5-5"],
       "cwd": "/Users/olivier/dev/frontend",

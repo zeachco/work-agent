@@ -33,7 +33,8 @@ enum Cmd {
     List,
     /// Run one task immediately, ignoring its schedule and exception rule.
     /// This is the only way to start a task that has no `schedule` (manual task).
-    Run { name: String },
+    /// Without a name, lists every runnable task instead.
+    Run { name: Option<String> },
     /// Validate the config and exit.
     Check,
 }
@@ -71,7 +72,30 @@ async fn main() -> Result<()> {
                 );
             }
         }
-        Cmd::Run { name } => {
+        Cmd::Run { name: None } => {
+            let store = Store::load(&cfg.state_file)?;
+            let now = Local::now();
+            println!("{:<24} {:<20} {:<20} {:<28} {}", "TASK", "LAST RUN", "NEXT RUN", "HARNESS/MODEL", "DESCRIPTION");
+            for t in cfg.resolved_tasks() {
+                let last = store.last_run(&t.name);
+                let next = match &t.schedule {
+                    Some(s) => schedule::parse(s)?.after(&last.unwrap_or(now)).next(),
+                    None => None,
+                };
+                let fmt = |d: Option<chrono::DateTime<Local>>| {
+                    d.map(|d| d.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_else(|| "never".into())
+                };
+                println!(
+                    "{:<24} {:<20} {:<20} {:<28} {}",
+                    t.name,
+                    fmt(last),
+                    fmt(next),
+                    format!("{}/{}", t.harness, t.model().unwrap_or("-")),
+                    t.description.as_deref().unwrap_or(""),
+                );
+            }
+        }
+        Cmd::Run { name: Some(name) } => {
             let task = cfg
                 .resolved_tasks()
                 .into_iter()
