@@ -1,0 +1,42 @@
+{
+  "tick_seconds": 60,
+  "state_file": "state.json",
+  "holidays": ["2026-12-25", "2026-12-26", "2027-01-01"],
+  "defaults": {
+    "harness": "pi",
+    "args": ["--model", "llamacpp/gemma-4-E4B-it"],
+    "runner": "herdr",
+    "timeout_seconds": 3600,
+    "close_workspace_on_done": false
+  },
+  "exception_llm": {
+    "base_url": "http://localhost:7070/v1",
+    "model": "gemma-4-E4B-it",
+    "timeout_seconds": 60
+  },
+  "tasks": [
+    {
+      "name": "daily-standup-notes",
+      "schedule": "0 9 * * 1-5",
+      "cwd": "/Users/olivier/dev",
+      "prompt": "Summarize yesterday's git activity across ~/dev repos into ~/notes/standup-${date}.md.",
+      "exception": "Do not run on holidays or weekends. Today is ${weekday} ${date}. Canada's holidays are ${holidays}."
+    },
+    {
+      "name": "frontend-ci-watch",
+      "schedule": "*/30 * * * *",
+      "harness": "claude",
+      "args": ["--model", "claude-sonnet-5-5"],
+      "cwd": "/Users/olivier/dev/frontend",
+      "parallel": true,
+      "prompt": "Check the latest CI run on main with `gh run list`; if it failed, investigate and write findings to ci-report-${date}.md."
+    },
+    {
+      "name": "nightly-cleanup",
+      "enabled": false,
+      "schedule": "0 2 * * *",
+      "runner": "process",
+      "prompt": "Delete build artifacts older than 7 days under ~/dev/*/target."
+    }
+  ]
+}

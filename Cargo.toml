@@ -1,0 +1,17 @@
+[package]
+name = "crons"
+version = "0.1.0"
+edition = "2021"
+description = "Daemon that cycles through scheduled agent tasks and runs them through a harness (pi, claude, ...) inside herdr workspaces"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+cron = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
