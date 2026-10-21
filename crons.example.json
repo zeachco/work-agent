@@ -1,10 +1,17 @@
 {
   "tick_seconds": 60,
   "state_file": "state.json",
-  "holidays": ["2026-12-25", "2026-12-26", "2027-01-01"],
+  "holidays": [
+    "2026-12-25",
+    "2026-12-26",
+    "2027-01-01"
+  ],
   "defaults": {
     "harness": "pi",
-    "args": ["--model", "llamacpp/gemma-4-E4B-it"],
+    "args": [
+      "--model",
+      "llamacpp/gemma-4-E4B-it"
+    ],
     "runner": "herdr",
     "timeout_seconds": 3600,
     "close_workspace_on_done": false,
@@ -27,7 +34,10 @@
       "name": "frontend-ci-watch",
       "schedule": "*/30 * * * *",
       "harness": "claude",
-      "args": ["--model", "claude-sonnet-5-5"],
+      "args": [
+        "--model",
+        "claude-sonnet-5-5"
+      ],
       "cwd": "/Users/olivier/dev/frontend",
       "parallel": true,
       "prompt": "Check the latest CI run on main with `gh run list`; if it failed, investigate and write findings to ci-report-${date}.md."
@@ -43,9 +53,19 @@
       "name": "release-notes",
       "description": "Draft release notes for the frontend since the last tag",
       "harness": "claude",
-      "args": ["--model", "claude-sonnet-5-5"],
+      "args": [
+        "--model",
+        "claude-sonnet-5-5"
+      ],
       "cwd": "/Users/olivier/dev/frontend",
       "prompt": "Draft release notes from the commits since the last tag into release-notes-${date}.md."
+    },
+    {
+      "name": "desktop-screenshot-cleanup",
+      "schedule": "0 10 * * *",
+      "runner": "process",
+      "cwd": "/Users/olivier",
+      "prompt": "First run `uname -s`. If it does not print `Darwin`, do nothing and exit. On macOS, delete screenshot and screen recording files on ~/Desktop that were last modified more than 7 days ago: files whose name starts with `Screenshot`, `Screen Shot`, `Screen Recording` or `Capture d'écran` (e.g. `Screenshot 2026-10-21 at 09.12.33.png`). Use `find ~/Desktop -maxdepth 1 -mtime +7` with those name patterns. Leave newer screenshots and every other file or folder untouched."
     }
   ]
 }

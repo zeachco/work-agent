@@ -5,7 +5,7 @@ description: Add a scheduled agent task to this work-agent project (crons.json).
 
 # Add a task to work-agent
 
-Tasks live in the `tasks` array of `crons.json` (tracked in git) and are
+Tasks live in the `tasks` array of `crons.json` (local, gitignored) and are
 documented by `crons.example.json`. The schema is `Task` in `src/config.rs`
 and rejects unknown keys, so only use the fields below.
 
