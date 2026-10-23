@@ -1,3 +1,5 @@
 /target
 /state.json
 /crons.json
+/workstations/*
+!/workstations/README.md

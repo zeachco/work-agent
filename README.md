@@ -28,6 +28,7 @@ the default `herdr` runner.
 |---|---|
 | `tick_seconds` | how often the loop looks for due tasks |
 | `state_file` | JSON file storing last-run timestamps (relative to the config) |
+| `workstations_dir` | per-task scratch root, default `workstations` (relative to the config, gitignored) |
 | `holidays` | dates exposed to prompts as `${holidays}` |
 | `defaults.harness` | `pi`, `claude`, `codex`, ... (any `herdr agent start --kind`) |
 | `defaults.args` | harness arguments, e.g. `["--model", "llamacpp/gemma-4-E4B-it"]` |
@@ -46,11 +47,28 @@ other but the daemon never starts it. Only `work-agent run <name>` does.
 `list` shows it as `manual`.
 
 Prompts and exception rules accept `${date}`, `${time}`, `${datetime}`,
-`${weekday}`, `${holidays}`, `${task}`.
+`${weekday}`, `${holidays}`, `${task}`, `${workstation}`.
+
+## Workstations
+
+Every task owns `workstations/<name>/`, a gitignored memory board that
+survives across runs:
+
+```
+workstations/<name>/memory.md   # notes the agent keeps for its next run
+workstations/<name>/...         # temp files and reusable artifacts, e.g. say-hello/format.py
+```
+
+Before each run the daemon creates the directory (and a stub `memory.md` on
+first run) and prepends a note to the prompt telling the agent to read and
+update `memory.md` and to drop temp files and scripts there instead of in the
+working tree. Use `${workstation}` in a prompt to reference it explicitly.
+Delete the directory to reset a task's memory.
 
 ## How a run works
 
 1. A task is due when a cron tick has elapsed since `last_run` (never-run tasks are due immediately).
 2. If it has an `exception`, the rendered rule is sent to the local model, which answers `SKIP` or `RUN`. An unreachable model never blocks a run.
-3. If an agent named `<name>` is still alive it is prompted directly (a run is refused while it is still `working`). Otherwise the `cron:<name>` workspace is reused when still open (a free pane, or a new split), and only then `herdr workspace create --cwd <cwd>`. Then `herdr agent start <name> --kind <harness> -- <args>` → `herdr agent prompt <name> "<prompt>" --wait`. With `fresh_workspace: true` every run gets its own `cron:<name>:<MM-DD HH:MM>` workspace and agent.
-4. The outcome is written to the state file and the loop moves to the next task.
+3. `workstations/<name>/` is created if missing and the prompt gets the workstation preamble.
+4. If an agent named `<name>` is still alive it is prompted directly (a run is refused while it is still `working`). Otherwise the `cron:<name>` workspace is reused when still open (a free pane, or a new split), and only then `herdr workspace create --cwd <cwd>`. Then `herdr agent start <name> --kind <harness> -- <args>` → `herdr agent prompt <name> "<prompt>" --wait`. With `fresh_workspace: true` every run gets its own `cron:<name>:<MM-DD HH:MM>` workspace and agent.
+5. The outcome is written to the state file and the loop moves to the next task.

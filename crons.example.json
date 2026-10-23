@@ -1,6 +1,7 @@
 {
   "tick_seconds": 60,
   "state_file": "state.json",
+  "workstations_dir": "workstations",
   "holidays": [
     "2026-12-25",
     "2026-12-26",
@@ -27,7 +28,7 @@
       "name": "daily-standup-notes",
       "schedule": "0 9 * * 1-5",
       "cwd": "/Users/olivier/dev",
-      "prompt": "Summarize yesterday's git activity across ~/dev repos into ~/notes/standup-${date}.md.",
+      "prompt": "Summarize yesterday's git activity across ~/dev repos into ~/notes/standup-${date}.md. Keep the list of repos worth watching in ${workstation}/memory.md.",
       "exception": "Do not run on holidays or weekends. Today is ${weekday} ${date}. Canada's holidays are ${holidays}."
     },
     {

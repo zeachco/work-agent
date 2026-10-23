@@ -4,6 +4,7 @@ mod runner;
 mod schedule;
 mod state;
 mod template;
+mod workstation;
 
 use anyhow::Result;
 use chrono::Local;
@@ -145,7 +146,7 @@ async fn daemon(cfg: Config) -> Result<()> {
 async fn execute(task: ResolvedTask, cfg: &Config, store: Arc<Mutex<Store>>) {
     let started = Local::now();
     if let Some(rule) = &task.exception {
-        let rendered = template::render(rule, &task.name, &cfg.holidays);
+        let rendered = template::render(rule, &task.name, &task.workstation, &cfg.holidays);
         match exception::should_skip(&cfg.exception_llm, &rendered).await {
             Ok(true) => {
                 info!(task = %task.name, "skipped by exception rule");
@@ -160,7 +161,16 @@ async fn execute(task: ResolvedTask, cfg: &Config, store: Arc<Mutex<Store>>) {
             Err(e) => warn!(task = %task.name, "exception check failed, running anyway: {e:#}"),
         }
     }
-    let prompt = template::render(&task.prompt, &task.name, &cfg.holidays);
+    let prompt = match workstation::prepare(&task.workstation) {
+        Ok(()) => {
+            let body = template::render(&task.prompt, &task.name, &task.workstation, &cfg.holidays);
+            workstation::with_preamble(&body, &task.workstation)
+        }
+        Err(e) => {
+            warn!(task = %task.name, "workstation unavailable, prompting without it: {e:#}");
+            template::render(&task.prompt, &task.name, &task.workstation, &cfg.holidays)
+        }
+    };
     info!(task = %task.name, harness = %task.harness, cwd = %task.cwd.display(), "running");
     // Mark the start first so a crash mid-run does not retrigger the task on restart.
     let _ = store.lock().await.record(&task.name, |s| {

@@ -12,6 +12,12 @@ pub struct Config {
     /// Where `last run` timestamps are persisted (relative to the config file).
     #[serde(default = "default_state_file")]
     pub state_file: PathBuf,
+    /// Per-task scratch area (relative to the config file). Each task gets
+    /// `<workstations_dir>/<name>/` with a `memory.md` for notes carried across
+    /// runs plus any helper files the agent wants to keep. Exposed to prompts as
+    /// `${workstation}`.
+    #[serde(default = "default_workstations_dir")]
+    pub workstations_dir: PathBuf,
     /// Defaults applied to every task that does not override them.
     #[serde(default)]
     pub defaults: Defaults,
@@ -132,6 +138,9 @@ fn default_tick() -> u64 {
 fn default_state_file() -> PathBuf {
     PathBuf::from("state.json")
 }
+fn default_workstations_dir() -> PathBuf {
+    PathBuf::from("workstations")
+}
 fn default_harness() -> String {
     "pi".into()
 }
@@ -163,6 +172,9 @@ impl Config {
         let base = path.parent().map(Path::to_path_buf).unwrap_or_default();
         if cfg.state_file.is_relative() {
             cfg.state_file = base.join(&cfg.state_file);
+        }
+        if cfg.workstations_dir.is_relative() {
+            cfg.workstations_dir = base.join(&cfg.workstations_dir);
         }
         cfg.validate()?;
         Ok(cfg)
@@ -218,6 +230,8 @@ pub struct ResolvedTask {
     pub args: Vec<String>,
     pub prompt: String,
     pub cwd: PathBuf,
+    /// `<workstations_dir>/<name>`: the task's persistent scratch directory.
+    pub workstation: PathBuf,
     pub parallel: bool,
     /// `None` means manual: only `run <name>` starts it.
     pub schedule: Option<String>,
@@ -243,6 +257,7 @@ impl Config {
                 cwd: t.cwd.clone().or_else(|| d.cwd.clone()).unwrap_or_else(|| {
                     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
                 }),
+                workstation: self.workstations_dir.join(&t.name),
                 parallel: t.parallel,
                 schedule: t.schedule.clone(),
                 exception: t.exception.clone(),

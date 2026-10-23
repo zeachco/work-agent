@@ -40,7 +40,18 @@ The running daemon reloads nothing: restart it after editing the config.
 
 Placeholders usable in `prompt` and `exception`: `${date}` (YYYY-MM-DD),
 `${time}` (HH:MM), `${datetime}`, `${weekday}`, `${holidays}` (comma-joined
-config list), `${task}` (task name).
+config list), `${task}` (task name), `${workstation}` (the task's scratch dir,
+`workstations/<name>/`).
+
+## Workstation (memory board)
+
+Each task gets a gitignored `workstations/<name>/` created on first run with a
+`memory.md`. The daemon prepends a note to every prompt asking the agent to read
+and update `memory.md` and to keep temp files and reusable scripts there
+(e.g. `workstations/say-hello/format.py`). You do not need to mention it in the
+prompt, but use `${workstation}` when the task should write a specific file
+there, e.g. `"prompt": "... append today's summary to ${workstation}/log.md"`.
+Delete the directory to reset a task's memory.
 
 ## Example
 
@@ -86,4 +97,5 @@ Same fields, no `schedule`; the user starts it on demand.
   keep them one JSON string, using `\n` only if the harness tolerates it.
 - A rerun is refused while the task's previous agent is still `working`;
   use `fresh_workspace: true` (or `parallel`) if overlapping runs are wanted.
-- `crons.json` is committed: keep secrets out of prompts and `crons.example.json` generic.
+- `crons.json` is gitignored; keep `crons.example.json` generic and free of secrets.
+- `workstations/` is gitignored too: anything the agent should keep belongs there, not in the working tree.
