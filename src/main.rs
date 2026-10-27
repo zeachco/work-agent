@@ -105,18 +105,34 @@ async fn main() -> Result<()> {
             let store = Arc::new(Mutex::new(Store::load(&cfg.state_file)?));
             execute(task, &cfg, store).await;
         }
-        Cmd::Daemon => daemon(cfg).await?,
+        Cmd::Daemon => daemon(cfg, cli.config).await?,
     }
     Ok(())
 }
 
-async fn daemon(cfg: Config) -> Result<()> {
+async fn daemon(cfg: Config, path: PathBuf) -> Result<()> {
     let store = Arc::new(Mutex::new(Store::load(&cfg.state_file)?));
-    let cfg = Arc::new(cfg);
+    let mut cfg = Arc::new(cfg);
+    let mut last_modified = modified_at(&path);
     info!(tasks = cfg.tasks.len(), tick = cfg.tick_seconds, "work-agent daemon started");
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
     loop {
         ticker.tick().await;
+        // Pick up edits to the config file. A broken config keeps the last good
+        // one; tasks already running keep the config they started with.
+        let modified = modified_at(&path);
+        if modified != last_modified {
+            last_modified = modified;
+            match Config::load(&path) {
+                Ok(fresh) => {
+                    info!(tasks = fresh.tasks.len(), "config reloaded");
+                    cfg = Arc::new(fresh);
+                    ticker = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
+                    ticker.tick().await; // first tick of a new interval fires immediately
+                }
+                Err(e) => error!("config reload failed, keeping previous: {e:#}"),
+            }
+        }
         // One full pass over the tasks, in config order. Serial tasks block the
         // pass; `parallel: true` tasks are detached and the pass moves on.
         for task in cfg.resolved_tasks() {
@@ -140,6 +156,11 @@ async fn daemon(cfg: Config) -> Result<()> {
             }
         }
     }
+}
+
+/// Modification time of the config file, or `None` when it cannot be read.
+fn modified_at(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 /// Evaluates the exception rule, runs the task and records the outcome.
