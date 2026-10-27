@@ -169,7 +169,13 @@ impl Config {
             .with_context(|| format!("reading config {}", path.display()))?;
         let mut cfg: Config = serde_json::from_str(&raw)
             .with_context(|| format!("parsing config {}", path.display()))?;
-        let base = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        // Absolute so prompts carry usable paths even when the agent runs in another cwd.
+        let base = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let base = std::fs::canonicalize(&base).unwrap_or(base);
         if cfg.state_file.is_relative() {
             cfg.state_file = base.join(&cfg.state_file);
         }
