@@ -11,8 +11,9 @@ use chrono::Local;
 use clap::{Parser, Subcommand};
 use config::{Config, ResolvedTask};
 use state::Store;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
@@ -118,20 +119,10 @@ async fn daemon(cfg: Config, path: PathBuf) -> Result<()> {
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
     loop {
         ticker.tick().await;
-        // Pick up edits to the config file. A broken config keeps the last good
-        // one; tasks already running keep the config they started with.
-        let modified = modified_at(&path);
-        if modified != last_modified {
-            last_modified = modified;
-            match Config::load(&path) {
-                Ok(fresh) => {
-                    info!(tasks = fresh.tasks.len(), "config reloaded");
-                    cfg = Arc::new(fresh);
-                    ticker = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
-                    ticker.tick().await; // first tick of a new interval fires immediately
-                }
-                Err(e) => error!("config reload failed, keeping previous: {e:#}"),
-            }
+        if let Some(fresh) = reload_if_changed(&path, &mut last_modified) {
+            cfg = Arc::new(fresh);
+            ticker = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
+            ticker.tick().await; // first tick of a new interval fires immediately
         }
         // One full pass over the tasks, in config order. Serial tasks block the
         // pass; `parallel: true` tasks are detached and the pass moves on.
@@ -159,7 +150,27 @@ async fn daemon(cfg: Config, path: PathBuf) -> Result<()> {
 }
 
 /// Modification time of the config file, or `None` when it cannot be read.
-fn modified_at(path: &std::path::Path) -> Option<std::time::SystemTime> {
+/// Picks up edits to the config file. A broken config keeps the last good
+/// one (returns None); tasks already running keep the config they started with.
+fn reload_if_changed(path: &Path, last_modified: &mut Option<SystemTime>) -> Option<Config> {
+    let modified = modified_at(path);
+    if modified == *last_modified {
+        return None;
+    }
+    *last_modified = modified;
+    match Config::load(path) {
+        Ok(fresh) => {
+            info!(tasks = fresh.tasks.len(), "config reloaded");
+            Some(fresh)
+        }
+        Err(e) => {
+            error!("config reload failed, keeping previous: {e:#}");
+            None
+        }
+    }
+}
+
+fn modified_at(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
