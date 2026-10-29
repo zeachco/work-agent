@@ -59,19 +59,16 @@ async fn prompt_and_finish(task: &ResolvedTask, agent: &str, workspace_id: &str,
     ])
     .await;
 
-    let outcome = match &result {
-        Ok(v) => pick(v, &["result", "status"])
-            .or_else(|| pick(v, &["result", "state"]))
-            .unwrap_or_else(|| "settled".into()),
-        Err(e) => format!("error: {e:#}"),
-    };
-
+    // Close before propagating a prompt failure so the workspace is not leaked.
     if task.close_workspace_on_done {
         if let Err(e) = herdr_json(&["workspace", "close", workspace_id]).await {
             tracing::warn!(task = %task.name, "failed to close workspace: {e:#}");
         }
     }
-    result.map(|_| outcome)
+    let v = result?;
+    Ok(pick(&v, &["result", "status"])
+        .or_else(|| pick(&v, &["result", "state"]))
+        .unwrap_or_else(|| "settled".into()))
 }
 
 fn workspace_label(name: &str) -> String {
@@ -100,7 +97,7 @@ async fn find_workspace(name: &str) -> Result<Option<String>> {
 /// agent, or a fresh split when every pane is busy.
 async fn shell_pane(workspace_id: &str, task: &ResolvedTask) -> Result<String> {
     let v = herdr_json(&["pane", "list", "--workspace", workspace_id]).await.context("herdr pane list")?;
-    let panes = v.pointer("/result/panes").and_then(Value::as_array).cloned().unwrap_or_default();
+    let panes: &[Value] = v.pointer("/result/panes").and_then(Value::as_array).map_or(&[], Vec::as_slice);
     let free = panes.iter().find(|p| {
         let status = p.get("agent_status").and_then(Value::as_str).unwrap_or("unknown");
         status == "unknown" || status == "none"
@@ -141,17 +138,12 @@ async fn create_workspace(task: &ResolvedTask, label: &str) -> Result<(String, S
 }
 
 async fn start_agent(task: &ResolvedTask, agent: &str, pane_id: &str) -> Result<()> {
-    let mut start = vec![
-        "agent".to_string(), "start".into(), agent.to_string(),
-        "--kind".into(), task.harness.clone(),
-        "--pane".into(), pane_id.to_string(),
-    ];
+    let mut argv = vec!["agent", "start", agent, "--kind", &task.harness, "--pane", pane_id];
     if !task.args.is_empty() {
-        start.push("--".into());
-        start.extend(task.args.iter().cloned());
+        argv.push("--");
+        argv.extend(task.args.iter().map(String::as_str));
     }
-    let start_refs: Vec<&str> = start.iter().map(String::as_str).collect();
-    herdr_json(&start_refs).await.context("herdr agent start").map(|_| ())
+    herdr_json(&argv).await.context("herdr agent start").map(|_| ())
 }
 
 /// Fallback when herdr is not wanted: run the harness non-interactively.
