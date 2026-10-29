@@ -35,20 +35,24 @@ async fn run_herdr(task: &ResolvedTask, prompt: &str) -> Result<String> {
             tracing::info!(task = %task.name, workspace_id = %ws, %status, "reusing running herdr agent");
             ws
         }
-        None => {
-            let (ws, pane) = match find_workspace(&task.name).await? {
-                Some(ws) => {
-                    let pane = shell_pane(&ws, task).await?;
-                    tracing::info!(task = %task.name, workspace_id = %ws, pane_id = %pane, "reusing herdr workspace");
-                    (ws, pane)
-                }
-                None => create_workspace(task, &workspace_label(&task.name)).await?,
-            };
-            start_agent(task, &task.name, &pane).await?;
-            ws
-        }
+        None => start_agent_in_workspace(task).await?,
     };
     prompt_and_finish(task, &task.name, &workspace_id, prompt).await
+}
+
+/// Starts the task's agent in its `cron:<name>` workspace, reusing the
+/// workspace when it is still open. Returns the workspace id.
+async fn start_agent_in_workspace(task: &ResolvedTask) -> Result<String> {
+    let (ws, pane) = match find_workspace(&task.name).await? {
+        Some(ws) => {
+            let pane = shell_pane(&ws, task).await?;
+            tracing::info!(task = %task.name, workspace_id = %ws, pane_id = %pane, "reusing herdr workspace");
+            (ws, pane)
+        }
+        None => create_workspace(task, &workspace_label(&task.name)).await?,
+    };
+    start_agent(task, &task.name, &pane).await?;
+    Ok(ws)
 }
 
 async fn prompt_and_finish(task: &ResolvedTask, agent: &str, workspace_id: &str, prompt: &str) -> Result<String> {
