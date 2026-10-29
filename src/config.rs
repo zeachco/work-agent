@@ -30,41 +30,36 @@ pub struct Config {
     pub tasks: Vec<Task>,
 }
 
+/// Missing fields fall back to `Defaults::default()`, the single source of
+/// the built-in values.
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct Defaults {
     /// Harness executable: `pi`, `claude`, ...
-    #[serde(default = "default_harness")]
     pub harness: String,
     /// Extra arguments passed to the harness after `--`.
-    #[serde(default = "default_args")]
     pub args: Vec<String>,
     /// Default working directory for tasks.
-    #[serde(default)]
     pub cwd: Option<PathBuf>,
     /// `herdr` (spawn a workspace + interactive agent) or `process` (plain subprocess).
-    #[serde(default)]
     pub runner: Runner,
     /// Max wall-clock time for one task run, in seconds.
-    #[serde(default = "default_timeout")]
     pub timeout_seconds: u64,
     /// Close the herdr workspace once the agent settles.
-    #[serde(default)]
     pub close_workspace_on_done: bool,
     /// Always spawn a new workspace labelled `cron:<name>:<date time>` instead
     /// of reusing the task's existing one.
-    #[serde(default)]
     pub fresh_workspace: bool,
 }
 
 impl Default for Defaults {
     fn default() -> Self {
         Self {
-            harness: default_harness(),
-            args: default_args(),
+            harness: "pi".into(),
+            args: vec!["--model".into(), "llamacpp/gemma-4-E4B-it".into()],
             cwd: None,
             runner: Runner::default(),
-            timeout_seconds: default_timeout(),
+            timeout_seconds: 3600,
             close_workspace_on_done: false,
             fresh_workspace: false,
         }
@@ -80,22 +75,19 @@ pub enum Runner {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct ExceptionLlm {
-    #[serde(default = "default_llm_url")]
     pub base_url: String,
-    #[serde(default = "default_llm_model")]
     pub model: String,
-    #[serde(default = "default_llm_timeout")]
     pub timeout_seconds: u64,
 }
 
 impl Default for ExceptionLlm {
     fn default() -> Self {
         Self {
-            base_url: default_llm_url(),
-            model: default_llm_model(),
-            timeout_seconds: default_llm_timeout(),
+            base_url: "http://localhost:7070/v1".into(),
+            model: "gemma-4-E4B-it".into(),
+            timeout_seconds: 60,
         }
     }
 }
@@ -140,24 +132,6 @@ fn default_state_file() -> PathBuf {
 }
 fn default_workstations_dir() -> PathBuf {
     PathBuf::from("workstations")
-}
-fn default_harness() -> String {
-    "pi".into()
-}
-fn default_args() -> Vec<String> {
-    vec!["--model".into(), "llamacpp/gemma-4-E4B-it".into()]
-}
-fn default_timeout() -> u64 {
-    3600
-}
-fn default_llm_url() -> String {
-    "http://localhost:7070/v1".into()
-}
-fn default_llm_model() -> String {
-    "gemma-4-E4B-it".into()
-}
-fn default_llm_timeout() -> u64 {
-    60
 }
 fn default_true() -> bool {
     true
