@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
             for t in cfg.resolved_tasks() {
                 let last = store.last_run(&t.name);
                 let (due, next) = match &t.schedule {
-                    Some(s) => (schedule::is_due(s, last, now)?, schedule::parse(s)?.after(&last.unwrap_or(now)).next()),
+                    Some(s) => (schedule::is_due(s, last, now)?, schedule::next_after(s, last.unwrap_or(now))?),
                     None => (false, None),
                 };
                 println!(
@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
             for t in cfg.resolved_tasks() {
                 let last = store.last_run(&t.name);
                 let next = match &t.schedule {
-                    Some(s) => schedule::parse(s)?.after(&last.unwrap_or(now)).next(),
+                    Some(s) => schedule::next_after(s, last.unwrap_or(now))?,
                     None => None,
                 };
                 let fmt = |d: Option<chrono::DateTime<Local>>| {
