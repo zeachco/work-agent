@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 /// Top-level JSON config (see `crons.example.json`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// How often the daemon wakes up to look for due tasks, in seconds.
@@ -30,7 +30,7 @@ pub struct Config {
     pub tasks: Vec<Task>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Defaults {
     /// Harness executable: `pi`, `claude`, ...
@@ -71,7 +71,7 @@ impl Default for Defaults {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Runner {
     #[default]
@@ -79,7 +79,7 @@ pub enum Runner {
     Process,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExceptionLlm {
     #[serde(default = "default_llm_url")]
@@ -100,7 +100,7 @@ impl Default for ExceptionLlm {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Task {
     /// Unique name, `[a-z][a-z0-9_-]{0,31}` (used as the herdr agent name).
@@ -228,7 +228,7 @@ fn valid_name(s: &str) -> bool {
 }
 
 /// A task with every default resolved.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ResolvedTask {
     pub name: String,
     pub description: Option<String>,
