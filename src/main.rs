@@ -1,5 +1,6 @@
 mod config;
 mod exception;
+mod herdr;
 mod runner;
 mod schedule;
 mod state;
