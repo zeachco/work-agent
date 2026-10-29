@@ -20,7 +20,7 @@ pub struct TaskState {
 
 pub struct Store {
     path: PathBuf,
-    pub state: State,
+    state: State,
 }
 
 impl Store {
