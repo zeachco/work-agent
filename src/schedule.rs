@@ -17,11 +17,16 @@ pub fn parse(expr: &str) -> Result<Schedule> {
 /// A task is due when at least one scheduled tick has passed since it last ran.
 /// A task that never ran is due immediately.
 pub fn is_due(expr: &str, last_run: Option<DateTime<Local>>, now: DateTime<Local>) -> Result<bool> {
-    let schedule = parse(expr)?;
     Ok(match last_run {
         None => true,
-        Some(last) => schedule.after(&last).next().map(|next| next <= now).unwrap_or(false),
+        Some(last) => next_after(expr, last)?.map(|next| next <= now).unwrap_or(false),
     })
+}
+
+/// The first scheduled tick strictly after `from`, or `None` when the
+/// expression has no future occurrence.
+pub fn next_after(expr: &str, from: DateTime<Local>) -> Result<Option<DateTime<Local>>> {
+    Ok(parse(expr)?.after(&from).next())
 }
 
 #[cfg(test)]
@@ -42,5 +47,12 @@ mod tests {
         assert!(!is_due("0 * * * *", Some(last), last + chrono::Duration::minutes(30)).unwrap());
         assert!(is_due("0 * * * *", Some(last), last + chrono::Duration::minutes(61)).unwrap());
         assert!(is_due("0 * * * *", None, last).unwrap());
+    }
+
+    #[test]
+    fn next_after_is_strictly_later() {
+        let at = Local.with_ymd_and_hms(2026, 10, 21, 9, 0, 0).unwrap();
+        let next = next_after("0 * * * *", at).unwrap().unwrap();
+        assert_eq!(next, at + chrono::Duration::hours(1));
     }
 }

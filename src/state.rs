@@ -20,7 +20,7 @@ pub struct TaskState {
 
 pub struct Store {
     path: PathBuf,
-    pub state: State,
+    state: State,
 }
 
 impl Store {
@@ -46,6 +46,8 @@ impl Store {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
+        // why: write-then-rename keeps state.json atomic, so a crash mid-save cannot
+        // leave a truncated file that would make every task look never-run.
         let tmp = self.path.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_vec_pretty(&self.state)?)?;
         std::fs::rename(&tmp, &self.path).with_context(|| format!("writing {}", self.path.display()))

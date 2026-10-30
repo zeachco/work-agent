@@ -1,5 +1,6 @@
 mod config;
 mod exception;
+mod herdr;
 mod runner;
 mod schedule;
 mod state;
@@ -11,8 +12,9 @@ use chrono::Local;
 use clap::{Parser, Subcommand};
 use config::{Config, ResolvedTask};
 use state::Store;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
@@ -52,50 +54,8 @@ async fn main() -> Result<()> {
         Cmd::Check => {
             println!("ok: {} task(s)", cfg.tasks.len());
         }
-        Cmd::List => {
-            let store = Store::load(&cfg.state_file)?;
-            let now = Local::now();
-            for t in cfg.resolved_tasks() {
-                let last = store.last_run(&t.name);
-                let (due, next) = match &t.schedule {
-                    Some(s) => (schedule::is_due(s, last, now)?, schedule::parse(s)?.after(&last.unwrap_or(now)).next()),
-                    None => (false, None),
-                };
-                println!(
-                    "{:<24} {:<16} harness={:<7} parallel={:<5} last={} next={} {}",
-                    t.name,
-                    t.schedule.as_deref().unwrap_or("manual"),
-                    t.harness,
-                    t.parallel,
-                    last.map(|d| d.to_rfc3339()).unwrap_or_else(|| "never".into()),
-                    next.map(|d| d.to_rfc3339()).unwrap_or_else(|| "-".into()),
-                    if due { "DUE" } else { "" }
-                );
-            }
-        }
-        Cmd::Run { name: None } => {
-            let store = Store::load(&cfg.state_file)?;
-            let now = Local::now();
-            println!("{:<24} {:<20} {:<20} {:<28} {}", "TASK", "LAST RUN", "NEXT RUN", "HARNESS/MODEL", "DESCRIPTION");
-            for t in cfg.resolved_tasks() {
-                let last = store.last_run(&t.name);
-                let next = match &t.schedule {
-                    Some(s) => schedule::parse(s)?.after(&last.unwrap_or(now)).next(),
-                    None => None,
-                };
-                let fmt = |d: Option<chrono::DateTime<Local>>| {
-                    d.map(|d| d.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_else(|| "never".into())
-                };
-                println!(
-                    "{:<24} {:<20} {:<20} {:<28} {}",
-                    t.name,
-                    fmt(last),
-                    fmt(next),
-                    format!("{}/{}", t.harness, t.model().unwrap_or("-")),
-                    t.description.as_deref().unwrap_or(""),
-                );
-            }
-        }
+        Cmd::List => print_schedule(&cfg)?,
+        Cmd::Run { name: None } => print_runnable(&cfg)?,
         Cmd::Run { name: Some(name) } => {
             let task = cfg
                 .resolved_tasks()
@@ -110,6 +70,56 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// `list`: every task with its schedule, last/next run and whether it is due now.
+fn print_schedule(cfg: &Config) -> Result<()> {
+    let store = Store::load(&cfg.state_file)?;
+    let now = Local::now();
+    for t in cfg.resolved_tasks() {
+        let last = store.last_run(&t.name);
+        let (due, next) = match &t.schedule {
+            Some(s) => (schedule::is_due(s, last, now)?, schedule::next_after(s, last.unwrap_or(now))?),
+            None => (false, None),
+        };
+        println!(
+            "{:<24} {:<16} harness={:<7} parallel={:<5} last={} next={} {}",
+            t.name,
+            t.schedule.as_deref().unwrap_or("manual"),
+            t.harness,
+            t.parallel,
+            last.map(|d| d.to_rfc3339()).unwrap_or_else(|| "never".into()),
+            next.map(|d| d.to_rfc3339()).unwrap_or_else(|| "-".into()),
+            if due { "DUE" } else { "" }
+        );
+    }
+    Ok(())
+}
+
+/// `run` with no name: the picker table for manual runs.
+fn print_runnable(cfg: &Config) -> Result<()> {
+    let store = Store::load(&cfg.state_file)?;
+    let now = Local::now();
+    println!("{:<24} {:<20} {:<20} {:<28} {}", "TASK", "LAST RUN", "NEXT RUN", "HARNESS/MODEL", "DESCRIPTION");
+    for t in cfg.resolved_tasks() {
+        let last = store.last_run(&t.name);
+        let next = match &t.schedule {
+            Some(s) => schedule::next_after(s, last.unwrap_or(now))?,
+            None => None,
+        };
+        let fmt = |d: Option<chrono::DateTime<Local>>| {
+            d.map(|d| d.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_else(|| "never".into())
+        };
+        println!(
+            "{:<24} {:<20} {:<20} {:<28} {}",
+            t.name,
+            fmt(last),
+            fmt(next),
+            format!("{}/{}", t.harness, t.model().unwrap_or("-")),
+            t.description.as_deref().unwrap_or(""),
+        );
+    }
+    Ok(())
+}
+
 async fn daemon(cfg: Config, path: PathBuf) -> Result<()> {
     let store = Arc::new(Mutex::new(Store::load(&cfg.state_file)?));
     let mut cfg = Arc::new(cfg);
@@ -118,20 +128,10 @@ async fn daemon(cfg: Config, path: PathBuf) -> Result<()> {
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
     loop {
         ticker.tick().await;
-        // Pick up edits to the config file. A broken config keeps the last good
-        // one; tasks already running keep the config they started with.
-        let modified = modified_at(&path);
-        if modified != last_modified {
-            last_modified = modified;
-            match Config::load(&path) {
-                Ok(fresh) => {
-                    info!(tasks = fresh.tasks.len(), "config reloaded");
-                    cfg = Arc::new(fresh);
-                    ticker = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
-                    ticker.tick().await; // first tick of a new interval fires immediately
-                }
-                Err(e) => error!("config reload failed, keeping previous: {e:#}"),
-            }
+        if let Some(fresh) = reload_if_changed(&path, &mut last_modified) {
+            cfg = Arc::new(fresh);
+            ticker = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
+            ticker.tick().await; // first tick of a new interval fires immediately
         }
         // One full pass over the tasks, in config order. Serial tasks block the
         // pass; `parallel: true` tasks are detached and the pass moves on.
@@ -159,7 +159,27 @@ async fn daemon(cfg: Config, path: PathBuf) -> Result<()> {
 }
 
 /// Modification time of the config file, or `None` when it cannot be read.
-fn modified_at(path: &std::path::Path) -> Option<std::time::SystemTime> {
+/// Picks up edits to the config file. A broken config keeps the last good
+/// one (returns None); tasks already running keep the config they started with.
+fn reload_if_changed(path: &Path, last_modified: &mut Option<SystemTime>) -> Option<Config> {
+    let modified = modified_at(path);
+    if modified == *last_modified {
+        return None;
+    }
+    *last_modified = modified;
+    match Config::load(path) {
+        Ok(fresh) => {
+            info!(tasks = fresh.tasks.len(), "config reloaded");
+            Some(fresh)
+        }
+        Err(e) => {
+            error!("config reload failed, keeping previous: {e:#}");
+            None
+        }
+    }
+}
+
+fn modified_at(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
@@ -182,14 +202,12 @@ async fn execute(task: ResolvedTask, cfg: &Config, store: Arc<Mutex<Store>>) {
             Err(e) => warn!(task = %task.name, "exception check failed, running anyway: {e:#}"),
         }
     }
+    let body = template::render(&task.prompt, &task.name, &task.workstation, &cfg.holidays);
     let prompt = match workstation::prepare(&task.workstation) {
-        Ok(()) => {
-            let body = template::render(&task.prompt, &task.name, &task.workstation, &cfg.holidays);
-            workstation::with_preamble(&body, &task.workstation)
-        }
+        Ok(()) => workstation::with_preamble(&body, &task.workstation),
         Err(e) => {
             warn!(task = %task.name, "workstation unavailable, prompting without it: {e:#}");
-            template::render(&task.prompt, &task.name, &task.workstation, &cfg.holidays)
+            body
         }
     };
     info!(task = %task.name, harness = %task.harness, cwd = %task.cwd.display(), "running");
