@@ -8,8 +8,9 @@ time unless it opts into `parallel`.
 ## Run
 
 ```sh
-cp crons.example.json crons.json   # edit tasks
-cargo run -- check                 # validate config
+cp config.example.toml config.toml           # global settings
+cp examples/tasks/daily-standup-notes.toml tasks/   # one file per task
+cargo run -- check                 # validate config and every task file
 cargo run -- list                  # show schedule / last run / next run
 cargo run -- run daily-standup-notes   # force one task now
 cargo run -- run release-notes         # start a manual task (no schedule)
@@ -17,18 +18,25 @@ cargo run -- run                       # list runnable tasks: last/next run, har
 cargo run                          # daemon (same as `cargo run -- daemon`)
 ```
 
-`--config <path>` or `CRONS_CONFIG` selects the config. `RUST_LOG=debug`
+`--config <path>` or `CRONS_CONFIG` selects `config.toml`; tasks are read
+from the `tasks/` folder next to it (`tasks_dir`). `RUST_LOG=debug`
 shows every herdr call. The daemon must itself run inside a herdr session
 (or on a machine where `herdr` can reach the running server) when tasks use
 the default `herdr` runner.
 
 ## Config
 
+`config.toml` holds the global settings; each task is its own
+`tasks/<name>.toml` (gitignored, examples in `examples/tasks/`). The file
+stem is the task name. The daemon reloads on its next tick when any of these
+files is added, changed or removed.
+
 | key | meaning |
 |---|---|
 | `tick_seconds` | how often the loop looks for due tasks |
 | `state_file` | JSON file storing last-run timestamps (relative to the config) |
 | `workstations_dir` | per-task scratch root, default `workstations` (relative to the config, gitignored) |
+| `tasks_dir` | folder of task files, default `tasks` (relative to the config) |
 | `holidays` | dates exposed to prompts as `${holidays}` |
 | `defaults.harness` | `pi`, `claude`, `codex`, ... (any `herdr agent start --kind`) |
 | `defaults.args` | harness arguments, e.g. `["--model", "llamacpp/gemma-4-E4B-it"]` |
@@ -38,9 +46,21 @@ the default `herdr` runner.
 | `defaults.fresh_workspace` | always create a new workspace labelled `cron:<name>:<MM-DD HH:MM>` instead of reusing the task's (default `false`) |
 | `exception_llm` | OpenAI-compatible endpoint used to evaluate `exception` rules |
 
-Per task: `name`, `prompt`, optional `description`, `schedule` (5 or 6 field cron),
+Per task file: `prompt`, optional `description`, `schedule` (5 or 6 field cron),
 `harness`, `args`, `cwd`, `parallel` (default false), `exception`, `runner`,
 `timeout_seconds`, `close_workspace_on_done`, `fresh_workspace`, `enabled`.
+
+```toml
+# tasks/frontend-ci-watch.toml
+schedule = "*/30 * * * *"
+harness = "claude"
+args = ["--model", "claude-sonnet-5-5"]
+cwd = "/Users/olivier/dev/frontend"
+parallel = true
+prompt = '''
+Check the latest CI run on main with `gh run list`; if it failed,
+investigate and write findings to ci-report-${date}.md.'''
+```
 
 A task without `schedule` is a **manual task**: it is configured like any
 other but the daemon never starts it. Only `work-agent run <name>` does.

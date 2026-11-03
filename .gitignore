@@ -1,6 +1,8 @@
 /target
 /state.json
 /state.json.tmp
-/crons.json
+/config.toml
+/tasks/*
+!/tasks/README.md
 /workstations/*
 !/workstations/README.md

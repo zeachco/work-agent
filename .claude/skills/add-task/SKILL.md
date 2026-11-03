@@ -1,29 +1,30 @@
 ---
 name: add-task
-description: Add a scheduled agent task to this work-agent project (crons.json). Use when the user asks to add, schedule, or create a new task, cron, or recurring agent job in this repo.
+description: Add a scheduled agent task to this work-agent project (one TOML file per task under tasks/). Use when the user asks to add, schedule, or create a new task, cron, or recurring agent job in this repo.
 ---
 
 # Add a task to work-agent
 
-Tasks live in the `tasks` array of `crons.json` (local, gitignored) and are
-documented by `crons.example.json`. The schema is `Task` in `src/config.rs`
-and rejects unknown keys, so only use the fields below.
+Each task is one TOML file, `tasks/<name>.toml` (local, gitignored), with
+examples in `examples/tasks/`. Global settings live in `config.toml`. The
+schema is `Task` in `src/config.rs` and rejects unknown keys, so only use the
+fields below. The task name is the file stem and must not appear in the file.
 
 ## Steps
 
-1. Read `crons.json` (copy `crons.example.json` to it if missing).
-2. Append a task object to `tasks`.
+1. Look at `tasks/` for the existing names and at a neighbour file for style.
+2. Write `tasks/<name>.toml`.
 3. Validate: `cargo run -- check`.
 4. Confirm the schedule: `cargo run -- list` (shows last / next run; manual tasks show `manual`).
 5. Optionally force a run: `cargo run -- run <name>`.
 
-The running daemon reloads nothing: restart it after editing the config.
+A running daemon picks the new file up on its next tick; no restart needed.
 
 ## Task fields
 
 | field | required | meaning |
 |---|---|---|
-| `name` | yes | unique, `[a-z][a-z0-9_-]{0,31}`; also the herdr agent name |
+| file name | yes | `<name>.toml`, `[a-z][a-z0-9_-]{0,31}`; also the herdr agent name |
 | `schedule` | no | cron, 5 fields `m h dom mon dow` or 6 fields with leading seconds. Omit it for a **manual task**: never run by the daemon, only via `cargo run -- run <name>` |
 | `prompt` | yes | what the agent does; supports placeholders (below) |
 | `description` | no | one-line summary shown by `cargo run -- run` (no name), which lists all runnable tasks |
@@ -55,31 +56,29 @@ Delete the directory to reset a task's memory.
 
 ## Example
 
-```json
-{
-  "name": "weekly-dep-audit",
-  "schedule": "0 8 * * 1",
-  "harness": "claude",
-  "args": ["--model", "claude-sonnet-5-5"],
-  "cwd": "/Users/olivier/dev/frontend",
-  "prompt": "Run `npm audit` and summarize actionable findings into audit-${date}.md.",
-  "exception": "Skip on holidays. Today is ${weekday} ${date}; holidays: ${holidays}."
-}
+`tasks/weekly-dep-audit.toml`:
+
+```toml
+schedule = "0 8 * * 1"
+harness = "claude"
+args = ["--model", "claude-sonnet-5-5"]
+cwd = "/Users/olivier/dev/frontend"
+exception = "Skip on holidays. Today is ${weekday} ${date}; holidays: ${holidays}."
+prompt = '''
+Run `npm audit` and summarize actionable findings into audit-${date}.md.'''
 ```
 
 ## Manual task example
 
-Same fields, no `schedule`; the user starts it on demand.
+Same fields, no `schedule`; the user starts it on demand. `tasks/release-notes.toml`:
 
-```json
-{
-  "name": "release-notes",
-  "description": "Draft release notes for the frontend since the last tag",
-  "harness": "claude",
-  "args": ["--model", "claude-sonnet-5-5"],
-  "cwd": "/Users/olivier/dev/frontend",
-  "prompt": "Draft release notes from the commits since the last tag into release-notes-${date}.md."
-}
+```toml
+description = "Draft release notes for the frontend since the last tag"
+harness = "claude"
+args = ["--model", "claude-sonnet-5-5"]
+cwd = "/Users/olivier/dev/frontend"
+prompt = '''
+Draft release notes from the commits since the last tag into release-notes-${date}.md.'''
 ```
 
 ## Gotchas
@@ -93,9 +92,11 @@ Same fields, no `schedule`; the user starts it on demand.
 - `args` is a full override, not a merge: repeat `--model` if you need it.
 - `exception` is only a guard; if the local LLM at `exception_llm.base_url`
   is unreachable, the task runs anyway.
-- Prompts are passed as a single argument (no shell), so quotes are safe;
-  keep them one JSON string, using `\n` only if the harness tolerates it.
+- Prompts are passed as a single argument (no shell), so quotes are safe.
+  Use a literal multi-line string (`'''...'''`) so backticks, quotes and
+  `${...}` need no escaping; the newline right after the opening `'''` is dropped.
 - A rerun is refused while the task's previous agent is still `working`;
   use `fresh_workspace: true` (or `parallel`) if overlapping runs are wanted.
-- `crons.json` is gitignored; keep `crons.example.json` generic and free of secrets.
+- `tasks/` and `config.toml` are gitignored; keep `examples/tasks/` and
+  `config.example.toml` generic and free of secrets.
 - `workstations/` is gitignored too: anything the agent should keep belongs there, not in the working tree.

@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-/// Top-level JSON config (see `crons.example.json`).
+/// Global settings from `config.toml` (see `config.example.toml`). Tasks are
+/// not in this file: each one is its own `<tasks_dir>/<name>.toml`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -18,6 +19,10 @@ pub struct Config {
     /// `${workstation}`.
     #[serde(default = "default_workstations_dir")]
     pub workstations_dir: PathBuf,
+    /// Folder of task files (relative to the config file). Every `*.toml` in it
+    /// is one task whose name is the file stem; files are loaded in name order.
+    #[serde(default = "default_tasks_dir")]
+    pub tasks_dir: PathBuf,
     /// Defaults applied to every task that does not override them.
     #[serde(default)]
     pub defaults: Defaults,
@@ -27,6 +32,7 @@ pub struct Config {
     /// Dates exposed to exception prompts as `${holidays}` (YYYY-MM-DD).
     #[serde(default)]
     pub holidays: Vec<String>,
+    #[serde(skip)]
     pub tasks: Vec<Task>,
 }
 
@@ -92,10 +98,13 @@ impl Default for ExceptionLlm {
     }
 }
 
+/// One `<tasks_dir>/<name>.toml` file.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Task {
-    /// Unique name, `[a-z][a-z0-9_-]{0,31}` (used as the herdr agent name).
+    /// The file stem, `[a-z][a-z0-9_-]{0,31}` (also the herdr agent name).
+    /// Not a field of the file: it comes from the file name.
+    #[serde(skip)]
     pub name: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -133,6 +142,9 @@ fn default_state_file() -> PathBuf {
 fn default_workstations_dir() -> PathBuf {
     PathBuf::from("workstations")
 }
+fn default_tasks_dir() -> PathBuf {
+    PathBuf::from("tasks")
+}
 fn default_true() -> bool {
     true
 }
@@ -141,7 +153,7 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("reading config {}", path.display()))?;
-        let mut cfg: Config = serde_json::from_str(&raw)
+        let mut cfg: Config = toml::from_str(&raw)
             .with_context(|| format!("parsing config {}", path.display()))?;
         // Absolute so prompts carry usable paths even when the agent runs in another cwd.
         let base = path
@@ -156,8 +168,21 @@ impl Config {
         if cfg.workstations_dir.is_relative() {
             cfg.workstations_dir = base.join(&cfg.workstations_dir);
         }
+        if cfg.tasks_dir.is_relative() {
+            cfg.tasks_dir = base.join(&cfg.tasks_dir);
+        }
+        cfg.tasks = load_tasks(&cfg.tasks_dir)?;
         cfg.validate()?;
         Ok(cfg)
+    }
+
+    /// Every file the config is built from, so the daemon can notice edits.
+    pub fn source_files(config: &Path) -> Vec<PathBuf> {
+        let mut files = vec![config.to_path_buf()];
+        if let Ok(cfg) = Self::load(config) {
+            files.extend(task_files(&cfg.tasks_dir).unwrap_or_default());
+        }
+        files
     }
 
     fn validate(&self) -> Result<()> {
@@ -166,7 +191,7 @@ impl Config {
             anyhow::ensure!(seen.insert(&t.name), "duplicate task name `{}`", t.name);
             anyhow::ensure!(
                 valid_name(&t.name),
-                "task name `{}` must match [a-z][a-z0-9_-]{{0,31}}",
+                "task file name `{}.toml` must match [a-z][a-z0-9_-]{{0,31}}",
                 t.name
             );
             if let Some(schedule) = &t.schedule {
@@ -192,6 +217,37 @@ impl ResolvedTask {
         }
         None
     }
+}
+
+/// `<tasks_dir>/*.toml`, sorted by file name. A missing folder is an error:
+/// a daemon with nothing to run is almost always a wrong `--config`.
+pub fn task_files(dir: &Path) -> Result<Vec<PathBuf>> {
+    let entries = std::fs::read_dir(dir)
+        .with_context(|| format!("reading tasks folder {}", dir.display()))?;
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "toml"))
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+fn load_tasks(dir: &Path) -> Result<Vec<Task>> {
+    task_files(dir)?
+        .into_iter()
+        .map(|path| {
+            let raw = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading task {}", path.display()))?;
+            let mut task: Task = toml::from_str(&raw)
+                .with_context(|| format!("parsing task {}", path.display()))?;
+            task.name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+                .unwrap_or_default();
+            Ok(task)
+        })
+        .collect()
 }
 
 fn valid_name(s: &str) -> bool {

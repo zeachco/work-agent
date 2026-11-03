@@ -1,0 +1,17 @@
+tick_seconds = 60
+state_file = 'state.json'
+workstations_dir = 'workstations'
+holidays = ['2026-12-25', '2026-12-26', '2027-01-01']
+
+[defaults]
+harness = 'pi'
+args = ['--model', 'llamacpp/gemma-4-E4B-it']
+runner = 'herdr'
+timeout_seconds = 3600
+close_workspace_on_done = false
+fresh_workspace = false
+
+[exception_llm]
+base_url = 'http://localhost:7070/v1'
+model = 'gemma-4-E4B-it'
+timeout_seconds = 60

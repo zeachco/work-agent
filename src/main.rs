@@ -21,8 +21,8 @@ use tracing::{error, info, warn};
 #[derive(Parser)]
 #[command(name = "work-agent", version, about = "Scheduled agent-task orchestrator")]
 struct Cli {
-    /// Path to the JSON config.
-    #[arg(short, long, default_value = "crons.json", env = "CRONS_CONFIG")]
+    /// Path to `config.toml`; tasks are read from `tasks/*.toml` next to it.
+    #[arg(short, long, default_value = "config.toml", env = "CRONS_CONFIG")]
     config: PathBuf,
     #[command(subcommand)]
     cmd: Option<Cmd>,
@@ -158,10 +158,10 @@ async fn daemon(cfg: Config, path: PathBuf) -> Result<()> {
     }
 }
 
-/// Modification time of the config file, or `None` when it cannot be read.
-/// Picks up edits to the config file. A broken config keeps the last good
-/// one (returns None); tasks already running keep the config they started with.
-fn reload_if_changed(path: &Path, last_modified: &mut Option<SystemTime>) -> Option<Config> {
+/// Picks up edits to `config.toml` and any file added, removed or changed
+/// under `tasks/`. A broken config keeps the last good one (returns None);
+/// tasks already running keep the config they started with.
+fn reload_if_changed(path: &Path, last_modified: &mut Fingerprint) -> Option<Config> {
     let modified = modified_at(path);
     if modified == *last_modified {
         return None;
@@ -179,8 +179,17 @@ fn reload_if_changed(path: &Path, last_modified: &mut Option<SystemTime>) -> Opt
     }
 }
 
-fn modified_at(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+/// Every source file with its modification time; `None` for an unreadable one.
+type Fingerprint = Vec<(PathBuf, Option<SystemTime>)>;
+
+fn modified_at(config: &Path) -> Fingerprint {
+    Config::source_files(config)
+        .into_iter()
+        .map(|p| {
+            let m = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
+            (p, m)
+        })
+        .collect()
 }
 
 /// Evaluates the exception rule, runs the task and records the outcome.

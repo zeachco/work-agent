@@ -1,0 +1,7 @@
+schedule = '*/30 * * * *'
+harness = 'claude'
+args = ['--model', 'claude-sonnet-5-5']
+cwd = '/Users/olivier/dev/frontend'
+parallel = true
+prompt = '''
+Check the latest CI run on main with `gh run list`; if it failed, investigate and write findings to ci-report-${date}.md.'''
