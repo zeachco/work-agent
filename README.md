@@ -65,6 +65,14 @@ update `memory.md` and to drop temp files and scripts there instead of in the
 working tree. Use `${workstation}` in a prompt to reference it explicitly.
 Delete the directory to reset a task's memory.
 
+## Addons
+
+`addons/` holds self-contained modules a prompt can call from any harness,
+including the local-model `pi` harness that has no MCP connectors. Each one
+is a dependency-free CLI, read-only by default, with its credentials under
+`~/.config/work-agent/<addon>/`. See [addons/README.md](addons/README.md);
+the first is `google-calendar` (today / week / range / search as text or JSON).
+
 ## How a run works
 
 1. A task is due when a cron tick has elapsed since `last_run` (never-run tasks are due immediately).
