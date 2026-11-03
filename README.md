@@ -64,7 +64,9 @@ investigate and write findings to ci-report-${date}.md.'''
 
 A task without `schedule` is a **manual task**: it is configured like any
 other but the daemon never starts it. Only `work-agent run <name>` does.
-`list` shows it as `manual`.
+`list` shows it as `manual`. `work-agent show` opens an fzf picker over the
+task files (with the file as preview) and opens the pick in `$VISUAL`,
+`$EDITOR`, or `nvim`.
 
 Prompts and exception rules accept `${date}`, `${time}`, `${datetime}`,
 `${weekday}`, `${holidays}`, `${task}`, `${workstation}`.

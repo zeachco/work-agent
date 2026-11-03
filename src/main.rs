@@ -7,7 +7,7 @@ mod state;
 mod template;
 mod workstation;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::Local;
 use clap::{Parser, Subcommand};
 use config::{Config, ResolvedTask};
@@ -34,6 +34,8 @@ enum Cmd {
     Daemon,
     /// Print each task with its next due time and exit.
     List,
+    /// Pick a task with fzf (previewing its file) and open it in $VISUAL/$EDITOR, or nvim.
+    Show,
     /// Run one task immediately, ignoring its schedule and exception rule.
     /// This is the only way to start a task that has no `schedule` (manual task).
     /// Without a name, lists every runnable task instead.
@@ -55,6 +57,7 @@ async fn main() -> Result<()> {
             println!("ok: {} task(s)", cfg.tasks.len());
         }
         Cmd::List => print_schedule(&cfg)?,
+        Cmd::Show => show_task(&cfg)?,
         Cmd::Run { name: None } => print_runnable(&cfg)?,
         Cmd::Run { name: Some(name) } => {
             let task = cfg
@@ -92,6 +95,48 @@ fn print_schedule(cfg: &Config) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// `show`: fzf over every task file (including disabled ones) with the file as
+/// preview; the picked file opens in `$VISUAL`, else `$EDITOR`, else `nvim`.
+fn show_task(cfg: &Config) -> Result<()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let dir = &cfg.tasks_dir;
+    let names: Vec<String> = cfg.tasks.iter().map(|t| t.name.clone()).collect();
+    anyhow::ensure!(!names.is_empty(), "no task files under {}", dir.display());
+    let preview = format!("cat {}/{{}}.toml", shell_quote(&dir.display().to_string()));
+    let mut fzf = Command::new("fzf")
+        .args(["--prompt", "task> ", "--preview", &preview, "--preview-window", "right:60%:wrap"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .context("spawning fzf (is it installed?)")?;
+    fzf.stdin.take().unwrap().write_all((names.join("\n") + "\n").as_bytes())?;
+    let out = fzf.wait_with_output()?;
+    let picked = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if picked.is_empty() {
+        return Ok(()); // cancelled
+    }
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .ok()
+        .filter(|e| !e.trim().is_empty())
+        .unwrap_or_else(|| "nvim".into());
+    // $EDITOR may carry flags ("code -w"), so split it on whitespace.
+    let mut parts = editor.split_whitespace();
+    let bin = parts.next().unwrap();
+    let status = Command::new(bin)
+        .args(parts)
+        .arg(dir.join(format!("{picked}.toml")))
+        .status()
+        .with_context(|| format!("launching editor `{editor}`"))?;
+    anyhow::ensure!(status.success(), "editor `{editor}` exited with {status}");
+    Ok(())
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// `run` with no name: the picker table for manual runs.
