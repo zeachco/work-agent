@@ -1,5 +1,5 @@
-description = 'Draft release notes for the frontend since the last tag'
+description = 'Draft release notes for my-app since the last tag'
 harness = 'claude'
 args = ['--model', 'claude-sonnet-5-5']
-cwd = '/Users/olivier/dev/frontend'
+cwd = '/Users/jane/projects/my-app'
 prompt = 'Draft release notes from the commits since the last tag into release-notes-${date}.md.'

@@ -51,11 +51,11 @@ Per task file: `prompt`, optional `description`, `schedule` (5 or 6 field cron),
 `timeout_seconds`, `close_workspace_on_done`, `fresh_workspace`, `enabled`.
 
 ```toml
-# tasks/frontend-ci-watch.toml
+# tasks/ci-watch.toml
 schedule = "*/30 * * * *"
 harness = "claude"
 args = ["--model", "claude-sonnet-5-5"]
-cwd = "/Users/olivier/dev/frontend"
+cwd = "/Users/jane/projects/my-app"
 parallel = true
 prompt = '''
 Check the latest CI run on main with `gh run list`; if it failed,

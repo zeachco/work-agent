@@ -1,5 +1,5 @@
 schedule = '0 10 * * *'
-cwd = '/Users/olivier'
+cwd = '/Users/jane'
 runner = 'process'
 prompt = '''
 First run `uname -s`. If it does not print `Darwin`, do nothing and exit. On macOS, delete screenshot and screen recording files on ~/Desktop that were last modified more than 7 days ago: files whose name starts with `Screenshot`, `Screen Shot`, `Screen Recording` or `Capture d'écran` (e.g. `Screenshot 2026-10-21 at 09.12.33.png`). Use `find ~/Desktop -maxdepth 1 -mtime +7` with those name patterns. Leave newer screenshots and every other file or folder untouched.'''

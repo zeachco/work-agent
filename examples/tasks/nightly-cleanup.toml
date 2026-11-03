@@ -1,4 +1,4 @@
 enabled = false
 schedule = '0 2 * * *'
 runner = 'process'
-prompt = 'Delete build artifacts older than 7 days under ~/dev/*/target.'
+prompt = 'Delete build artifacts older than 7 days under ~/projects/*/target.'

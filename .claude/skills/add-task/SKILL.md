@@ -62,7 +62,7 @@ Delete the directory to reset a task's memory.
 schedule = "0 8 * * 1"
 harness = "claude"
 args = ["--model", "claude-sonnet-5-5"]
-cwd = "/Users/olivier/dev/frontend"
+cwd = "/Users/jane/projects/my-app"
 exception = "Skip on holidays. Today is ${weekday} ${date}; holidays: ${holidays}."
 prompt = '''
 Run `npm audit` and summarize actionable findings into audit-${date}.md.'''
@@ -73,10 +73,10 @@ Run `npm audit` and summarize actionable findings into audit-${date}.md.'''
 Same fields, no `schedule`; the user starts it on demand. `tasks/release-notes.toml`:
 
 ```toml
-description = "Draft release notes for the frontend since the last tag"
+description = "Draft release notes for my-app since the last tag"
 harness = "claude"
 args = ["--model", "claude-sonnet-5-5"]
-cwd = "/Users/olivier/dev/frontend"
+cwd = "/Users/jane/projects/my-app"
 prompt = '''
 Draft release notes from the commits since the last tag into release-notes-${date}.md.'''
 ```
