@@ -1,56 +1,51 @@
-//! `work-agent service`: install the daemon as systemd user services, one
-//! unit per profile. `install a b c` makes the installed set exactly those
-//! three profiles (other `work-agent-*` units are removed unless asked to
-//! keep them).
+//! `work-agent service a b c`: install the daemon as systemd user services,
+//! one unit per profile, making the installed set exactly those profiles
+//! (other `work-agent-*` units are removed unless asked to keep them).
 
 use anyhow::{Context, Result};
-use clap::Subcommand;
+use clap::Args;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[derive(Subcommand)]
-pub enum ServiceCmd {
-    /// Write, enable and start one `work-agent-<folder>.service` per profile.
-    /// Missing folders are created (scaffolded).
-    Install {
-        /// Profile folders the daemons load, e.g. `~/.config/work-agent/default`.
-        #[arg(required = true)]
-        profiles: Vec<PathBuf>,
-        /// Leave `work-agent-*.service` units of other profiles running
-        /// instead of removing them first.
-        #[arg(long)]
-        keep_others: bool,
-    },
-    /// Stop, disable and remove the units of these profiles.
-    Uninstall {
-        #[arg(required = true)]
-        profiles: Vec<PathBuf>,
-    },
-    /// `systemctl --user status` of the units of these profiles (all installed ones when none is given).
-    Status { profiles: Vec<PathBuf> },
+/// `work-agent service <profile>...`: install one daemon per profile.
+#[derive(Args)]
+pub struct ServiceArgs {
+    /// Profile folders, e.g. `~/.config/work-agent/default ~/dev/private-profile`.
+    /// Missing folders are created (scaffolded). One `work-agent-<folder>.service`
+    /// each; other installed units are removed unless `--keep-others`.
+    #[arg(required_unless_present = "status")]
+    profiles: Vec<PathBuf>,
+    /// Leave `work-agent-*.service` units of other profiles running
+    /// instead of removing them first.
+    #[arg(long, conflicts_with_all = ["uninstall", "status"])]
+    keep_others: bool,
+    /// Stop, disable and remove the units of these profiles instead of installing.
+    #[arg(long, conflicts_with = "status")]
+    uninstall: bool,
+    /// `systemctl --user status` of these profiles' units (every installed one when no path is given).
+    #[arg(long)]
+    status: bool,
 }
 
-pub fn run(cmd: ServiceCmd) -> Result<()> {
-    match cmd {
-        ServiceCmd::Install { profiles, keep_others } => install(&profiles, keep_others),
-        ServiceCmd::Uninstall { profiles } => {
-            for p in &profiles {
-                remove_unit(&unit_name(p)?)?;
-            }
-            systemctl(&["daemon-reload"])
-        }
-        ServiceCmd::Status { profiles } => {
-            let units = if profiles.is_empty() {
-                installed_units()?
-            } else {
-                profiles.iter().map(|p| unit_name(p)).collect::<Result<_>>()?
-            };
-            anyhow::ensure!(!units.is_empty(), "no work-agent service installed");
-            let mut args = vec!["status", "--no-pager"];
-            args.extend(units.iter().map(String::as_str));
-            systemctl(&args)
-        }
+pub fn run(args: ServiceArgs) -> Result<()> {
+    if args.status {
+        let units = if args.profiles.is_empty() {
+            installed_units()?
+        } else {
+            args.profiles.iter().map(|p| unit_name(p)).collect::<Result<_>>()?
+        };
+        anyhow::ensure!(!units.is_empty(), "no work-agent service installed");
+        let mut argv = vec!["status", "--no-pager"];
+        argv.extend(units.iter().map(String::as_str));
+        return systemctl(&argv);
     }
+    if args.uninstall {
+        for p in &args.profiles {
+            remove_unit(&unit_name(p)?)?;
+        }
+        return systemctl(&["daemon-reload"]);
+    }
+    install(&args.profiles, args.keep_others)
 }
 
 fn install(profiles: &[PathBuf], keep_others: bool) -> Result<()> {

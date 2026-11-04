@@ -45,26 +45,27 @@ cargo run -- --profile ~/agent-profiles/work daemon   # another profile, e.g. a 
 
 ## Run as a service
 
-`cargo service` (an alias in `.cargo/config.toml`) builds the release
-binary and installs it as systemd user units, one per profile path given.
-Paths are required and scaffolded when missing. `install` makes the set of
-installed daemons exactly the paths you pass: any other
+`work-agent service <profile>...` installs the binary that runs it as systemd
+user units, one per profile path. Paths are scaffolded when missing. The
+installed daemons become exactly the paths you pass: any other
 `work-agent-*.service` is removed first, unless `--keep-others`:
 
 ```sh
-cargo service install ~/.config/work-agent/default           # one daemon: work-agent-default.service
-cargo service install ~/profiles/work ~/profiles/personal    # two daemons, the default one is removed
-cargo service install ~/profiles/other --keep-others         # add a third, keep the rest
-cargo service status                                          # every installed daemon
-cargo service uninstall ~/profiles/personal
-journalctl --user -fu work-agent-work.service                 # logs
+cargo install --path .                                        # puts work-agent on your PATH
+work-agent service ~/.config/work-agent/default               # one daemon: work-agent-default.service
+work-agent service ~/.config/wa ~/dev/some-private-config     # two daemons, the default one is removed
+work-agent service ~/profiles/other --keep-others             # add a third, keep the rest
+work-agent service --status                                   # every installed daemon
+work-agent service --uninstall ~/dev/some-private-config
+journalctl --user -fu work-agent-wa.service                   # logs
 ```
 
-Units are named after the profile folder, so two profiles must not share a
-folder name. Each unit points at the binary that installed it
-(`target/release/work-agent`), so rerun `install` after rebuilding (it restarts
-the daemons), and it captures your current `PATH` so `herdr` and the
-harnesses resolve the same way they do in your shell.
+From a checkout, `cargo service ...` (alias in `.cargo/config.toml`) does the
+same with a release build of the working tree. Units are named after the
+profile folder, so two profiles must not share a folder name. Each unit
+points at the binary that installed it, so rerun `service` after reinstalling
+or rebuilding (it restarts the daemons). It captures your current `PATH` so
+`herdr` and the harnesses resolve the same way they do in your shell.
 
 `RUST_LOG=debug` shows every herdr call. The daemon must itself run inside a
 herdr session (or on a machine where `herdr` can reach the running server)

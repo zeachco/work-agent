@@ -45,9 +45,9 @@ enum Cmd {
     Run { name: Option<String> },
     /// Validate the config and exit.
     Check,
-    /// Install, remove or inspect a systemd user service running the daemon on a profile.
-    #[command(subcommand)]
-    Service(service::ServiceCmd),
+    /// Install the daemon as a systemd user service, one per profile path given
+    /// (`--uninstall` / `--status` to remove or inspect them).
+    Service(service::ServiceArgs),
 }
 
 #[tokio::main]
@@ -56,8 +56,8 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let cli = Cli::parse();
-    if let Some(Cmd::Service(cmd)) = cli.cmd {
-        return service::run(cmd);
+    if let Some(Cmd::Service(args)) = cli.cmd {
+        return service::run(args);
     }
     let cfg = Config::load(&cli.profile)?;
 
