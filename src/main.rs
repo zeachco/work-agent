@@ -256,13 +256,19 @@ async fn execute(task: ResolvedTask, cfg: &Config, store: Arc<Mutex<Store>>) {
             Err(e) => warn!(task = %task.name, "exception check failed, running anyway: {e:#}"),
         }
     }
-    let body = template::render(&task.prompt, &task.name, &task.workstation, &cfg.holidays);
-    let prompt = match workstation::prepare(&task.workstation) {
-        Ok(()) => workstation::with_preamble(&body, &task.workstation),
-        Err(e) => {
-            warn!(task = %task.name, "workstation unavailable, prompting without it: {e:#}");
-            body
+    // Command tasks carry no prompt; the workstation note only matters to agents.
+    let prompt = match &task.prompt {
+        Some(raw) => {
+            let body = template::render(raw, &task.name, &task.workstation, &cfg.holidays);
+            match workstation::prepare(&task.workstation) {
+                Ok(()) => workstation::with_preamble(&body, &task.workstation),
+                Err(e) => {
+                    warn!(task = %task.name, "workstation unavailable, prompting without it: {e:#}");
+                    body
+                }
+            }
         }
+        None => String::new(),
     };
     info!(task = %task.name, harness = %task.harness, cwd = %task.cwd.display(), "running");
     // Mark the start first so a crash mid-run does not retrigger the task on restart.

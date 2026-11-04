@@ -1,0 +1,4 @@
+schedule = '0 3 * * *'
+runner = 'command'
+command = 'bash ~/scripts/rotate-logs.sh'
+description = 'Rotate app logs; the pane stays in the herdr session so a sudo prompt can be answered by hand'

@@ -26,12 +26,13 @@ A running daemon picks the new file up on its next tick; no restart needed.
 |---|---|---|
 | file name | yes | `<name>.toml`, `[a-z][a-z0-9_-]{0,31}`; also the herdr agent name |
 | `schedule` | no | cron, 5 fields `m h dom mon dow` or 6 fields with leading seconds. Omit it for a **manual task**: never run by the daemon, only via `cargo run -- run <name>` |
-| `prompt` | yes | what the agent does; supports placeholders (below) |
+| `prompt` | for `herdr`/`process` | what the agent does; supports placeholders (below) |
+| `command` | for `command` | shell line sent straight to a herdr pane, no agent involved |
 | `description` | no | one-line summary shown by `cargo run -- run` (no name), which lists all runnable tasks |
 | `cwd` | no | directory the harness starts in (falls back to `defaults.cwd`) |
 | `harness` | no | `pi` (default), `claude`, `codex`, ... anything `herdr agent start --kind` accepts |
 | `args` | no | replaces `defaults.args` entirely, e.g. `["--model", "claude-sonnet-5-5"]` |
-| `runner` | no | `herdr` (workspace + interactive agent, default) or `process` (`harness -p prompt`) |
+| `runner` | no | `herdr` (workspace + interactive agent, default), `process` (`harness -p prompt`) or `command` (run the `command` line directly in a herdr pane) |
 | `parallel` | no | `true` lets it run alongside other tasks; default is strictly one at a time |
 | `exception` | no | natural-language rule evaluated by the local LLM; a SKIP answer skips the run |
 | `timeout_seconds` | no | max wall-clock for one run (default 3600) |
@@ -79,6 +80,22 @@ args = ["--model", "claude-sonnet-5-5"]
 cwd = "/Users/jane/projects/my-app"
 prompt = '''
 Draft release notes from the commits since the last tag into release-notes-${date}.md.'''
+```
+
+## Command task example
+
+No agent: the `command` line runs in a shell pane of the task's
+`cron:<name>` workspace. Use it for scripts that need the user's hands
+(e.g. a `sudo` password) — the pane stays in the herdr session the whole
+run. `prompt` is not used by this runner.
+
+`tasks/nightly-log-rotate.toml`:
+
+```toml
+schedule = "0 3 * * *"
+runner = "command"
+command = "bash ~/scripts/rotate-logs.sh"
+description = "Rotate app logs"
 ```
 
 ## Gotchas

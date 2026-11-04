@@ -47,7 +47,8 @@ pub struct Defaults {
     pub args: Vec<String>,
     /// Default working directory for tasks.
     pub cwd: Option<PathBuf>,
-    /// `herdr` (spawn a workspace + interactive agent) or `process` (plain subprocess).
+    /// `herdr` (spawn a workspace + interactive agent), `process` (plain
+    /// subprocess) or `command` (run a shell line directly in a herdr pane).
     pub runner: Runner,
     /// Max wall-clock time for one task run, in seconds.
     pub timeout_seconds: u64,
@@ -72,12 +73,16 @@ impl Default for Defaults {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Runner {
     #[default]
     Herdr,
     Process,
+    /// Runs the task's `command` line directly in a herdr pane, no agent: the
+    /// pane stays attached to the user's herdr session so interactive prompts
+    /// (e.g. `sudo`'s password) can be answered by hand.
+    Command,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,8 +119,11 @@ pub struct Task {
     pub harness: Option<String>,
     /// Harness argument override (replaces defaults.args).
     pub args: Option<Vec<String>>,
-    /// What the agent is asked to do. Supports `${...}` placeholders.
-    pub prompt: String,
+    /// What the agent is asked to do. Supports `${...}` placeholders. Required
+    /// for the `herdr` and `process` runners; ignored by `command`.
+    pub prompt: Option<String>,
+    /// Shell line run directly in a herdr pane by the `command` runner.
+    pub command: Option<String>,
     /// Directory the harness is started from.
     pub cwd: Option<PathBuf>,
     /// Allow this task to run alongside others (default: false, strictly one at a time).
@@ -198,6 +206,23 @@ impl Config {
                 crate::schedule::parse(schedule)
                     .with_context(|| format!("task `{}` has an invalid schedule", t.name))?;
             }
+            let runner = t.runner.unwrap_or(self.defaults.runner);
+            match runner {
+                Runner::Command => {
+                    anyhow::ensure!(
+                        t.command.is_some(),
+                        "task `{}` uses the command runner but has no `command`",
+                        t.name,
+                    );
+                }
+                _ => {
+                    anyhow::ensure!(
+                        t.prompt.is_some(),
+                        "task `{}` needs a `prompt` (the command runner needs `command` instead)",
+                        t.name,
+                    );
+                }
+            }
         }
         Ok(())
     }
@@ -264,7 +289,9 @@ pub struct ResolvedTask {
     pub description: Option<String>,
     pub harness: String,
     pub args: Vec<String>,
-    pub prompt: String,
+    pub prompt: Option<String>,
+    /// Shell line for the `command` runner.
+    pub command: Option<String>,
     pub cwd: PathBuf,
     /// `<workstations_dir>/<name>`: the task's persistent scratch directory.
     pub workstation: PathBuf,
@@ -284,13 +311,16 @@ impl Config {
         self.tasks
             .iter()
             .filter(|t| t.enabled)
-            .map(|t| ResolvedTask {
-                name: t.name.clone(),
-                description: t.description.clone(),
-                harness: t.harness.clone().unwrap_or_else(|| d.harness.clone()),
-                args: t.args.clone().unwrap_or_else(|| d.args.clone()),
-                prompt: t.prompt.clone(),
-                cwd: t.cwd.clone().or_else(|| d.cwd.clone()).unwrap_or_else(|| {
+            .map(|t| {
+                let is_command = t.runner.unwrap_or(d.runner) == Runner::Command;
+                ResolvedTask {
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    harness: if is_command { "command".into() } else { t.harness.clone().unwrap_or_else(|| d.harness.clone()) },
+                    args: if is_command { Vec::new() } else { t.args.clone().unwrap_or_else(|| d.args.clone()) },
+                    prompt: t.prompt.clone(),
+                    command: t.command.clone(),
+                    cwd: t.cwd.clone().or_else(|| d.cwd.clone()).unwrap_or_else(|| {
                     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
                 }),
                 workstation: self.workstations_dir.join(&t.name),
@@ -299,10 +329,11 @@ impl Config {
                 exception: t.exception.clone(),
                 runner: t.runner.unwrap_or(d.runner),
                 timeout_seconds: t.timeout_seconds.unwrap_or(d.timeout_seconds),
-                close_workspace_on_done: t
-                    .close_workspace_on_done
-                    .unwrap_or(d.close_workspace_on_done),
-                fresh_workspace: t.fresh_workspace.unwrap_or(d.fresh_workspace),
+                    close_workspace_on_done: t
+                        .close_workspace_on_done
+                        .unwrap_or(d.close_workspace_on_done),
+                    fresh_workspace: t.fresh_workspace.unwrap_or(d.fresh_workspace),
+                }
             })
             .collect()
     }

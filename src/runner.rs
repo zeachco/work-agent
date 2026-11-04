@@ -1,6 +1,7 @@
 use crate::config::{ResolvedTask, Runner};
 use crate::herdr::{create_workspace, find_agent, find_workspace, herdr_json, pick, shell_pane, start_agent, workspace_label};
 use anyhow::{bail, Context, Result};
+use serde_json::Value;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
@@ -10,7 +11,67 @@ pub async fn run(task: &ResolvedTask, prompt: &str) -> Result<String> {
     match task.runner {
         Runner::Herdr => run_herdr(task, prompt).await,
         Runner::Process => run_process(task, prompt).await,
+        Runner::Command => run_command(task).await,
     }
+}
+
+/// Runs the task's `command` line directly in a herdr pane, with no agent in
+/// the loop. The pane stays in the user's herdr session for the whole run, so
+/// interactive prompts (e.g. `sudo`'s password) can be answered by hand.
+/// Completion is detected when the pane's foreground process returns to its
+/// shell; the run then counts as settled even though no agent reported it.
+async fn run_command(task: &ResolvedTask) -> Result<String> {
+    let command = task
+        .command
+        .as_ref()
+        .context("command runner needs a `command` field")?;
+    let (ws, pane) = if task.fresh_workspace {
+        let stamp = chrono::Local::now().format("%m-%d %H:%M");
+        create_workspace(task, &format!("{}:{}", workspace_label(&task.name), stamp)).await?
+    } else {
+        match find_workspace(&task.name).await? {
+            Some(ws) => {
+                let pane = shell_pane(&ws, task).await?;
+                tracing::info!(task = %task.name, workspace_id = %ws, pane_id = %pane, "reusing herdr workspace");
+                (ws, pane)
+            }
+            None => create_workspace(task, &workspace_label(&task.name)).await?,
+        }
+    };
+    herdr_json(&["pane", "run", &pane, command])
+        .await
+        .context("herdr pane run")?;
+    // Poll the pane's foreground process until it is the shell again. The
+    // first check is delayed so the shell has parsed the line and the command
+    // is actually in the foreground; an instant check would see the idle shell
+    // and declare the run done.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(task.timeout_seconds);
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let v = herdr_json(&["pane", "process-info", "--pane", &pane])
+            .await
+            .context("herdr pane process-info")?;
+        let info = v.pointer("/result/process_info").context("process-info returned no data")?;
+        let settled = match (
+            info.get("foreground_process_group_id").and_then(Value::as_u64),
+            info.get("shell_pid").and_then(Value::as_u64),
+        ) {
+            (Some(fg), Some(shell)) => fg == shell,
+            _ => false,
+        };
+        if settled {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!("command did not settle within {}s", task.timeout_seconds);
+        }
+    }
+    if task.close_workspace_on_done {
+        if let Err(e) = herdr_json(&["workspace", "close", &ws]).await {
+            tracing::warn!(task = %task.name, "failed to close workspace: {e:#}");
+        }
+    }
+    Ok("settled".into())
 }
 
 /// Runs the task inside herdr. Reuses the agent named after the task if it
