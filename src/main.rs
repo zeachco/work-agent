@@ -3,6 +3,7 @@ mod exception;
 mod herdr;
 mod runner;
 mod schedule;
+mod service;
 mod state;
 mod template;
 mod workstation;
@@ -44,6 +45,9 @@ enum Cmd {
     Run { name: Option<String> },
     /// Validate the config and exit.
     Check,
+    /// Install, remove or inspect a systemd user service running the daemon on a profile.
+    #[command(subcommand)]
+    Service(service::ServiceCmd),
 }
 
 #[tokio::main]
@@ -52,6 +56,9 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let cli = Cli::parse();
+    if let Some(Cmd::Service(cmd)) = cli.cmd {
+        return service::run(cmd);
+    }
     let cfg = Config::load(&cli.profile)?;
 
     match cli.cmd.unwrap_or(Cmd::Daemon) {
@@ -71,6 +78,7 @@ async fn main() -> Result<()> {
             execute(task, &cfg, store).await;
         }
         Cmd::Daemon => daemon(cfg, cli.profile).await?,
+        Cmd::Service(_) => unreachable!("handled before loading the profile"),
     }
     Ok(())
 }

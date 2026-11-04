@@ -43,6 +43,27 @@ cargo run                          # daemon (same as `cargo run -- daemon`)
 cargo run -- --profile ~/agent-profiles/work daemon   # another profile, e.g. a private repo checkout
 ```
 
+## Run as a service
+
+`cargo service` (an alias in `.cargo/config.toml`) builds the release
+binary and installs it as a systemd user unit for one profile. The profile
+path is required and is scaffolded when missing; one unit per profile, so
+`work/` and `personal/` can each have their own daemon:
+
+```sh
+cargo service install ~/.config/work-agent/default   # -> work-agent-default.service, enabled + started
+cargo service install ~/agent-profiles/work          # -> work-agent-work.service
+cargo service status ~/.config/work-agent/default
+cargo service uninstall ~/.config/work-agent/default
+journalctl --user -fu work-agent-default.service      # logs
+```
+
+`--name <suffix>` overrides the unit name when two profiles share a folder
+name. The unit points at the binary that installed it
+(`target/release/work-agent`), so rerun `install` after rebuilding, and it
+captures your current `PATH` so `herdr` and the harnesses resolve the same way
+they do in your shell.
+
 `RUST_LOG=debug` shows every herdr call. The daemon must itself run inside a
 herdr session (or on a machine where `herdr` can reach the running server)
 when tasks use the default `herdr` runner.

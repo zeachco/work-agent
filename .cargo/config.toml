@@ -1,0 +1,4 @@
+[alias]
+# `cargo service install ~/.config/work-agent/default`: release build, then
+# install that binary as a systemd user service for the given profile.
+service = "run --release -- service"
