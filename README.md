@@ -57,6 +57,7 @@ work-agent service ~/.config/wa ~/dev/some-private-config     # two daemons, the
 work-agent service ~/profiles/other --keep-others             # add a third, keep the rest
 work-agent service --status                                   # every installed daemon
 work-agent service --uninstall ~/dev/some-private-config
+work-agent service --uninstall --all                          # remove every installed daemon
 journalctl --user -fu work-agent-wa.service                   # logs
 ```
 

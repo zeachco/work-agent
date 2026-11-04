@@ -13,7 +13,7 @@ pub struct ServiceArgs {
     /// Profile folders, e.g. `~/.config/work-agent/default ~/dev/private-profile`.
     /// Missing folders are created (scaffolded). One `work-agent-<folder>.service`
     /// each; other installed units are removed unless `--keep-others`.
-    #[arg(required_unless_present = "status")]
+    #[arg(required_unless_present_any = ["status", "all"])]
     profiles: Vec<PathBuf>,
     /// Leave `work-agent-*.service` units of other profiles running
     /// instead of removing them first.
@@ -25,6 +25,9 @@ pub struct ServiceArgs {
     /// `systemctl --user status` of these profiles' units (every installed one when no path is given).
     #[arg(long)]
     status: bool,
+    /// With `--uninstall`: remove every installed `work-agent-*.service`.
+    #[arg(long, requires = "uninstall", conflicts_with = "profiles")]
+    all: bool,
 }
 
 pub fn run(args: ServiceArgs) -> Result<()> {
@@ -40,8 +43,16 @@ pub fn run(args: ServiceArgs) -> Result<()> {
         return systemctl(&argv);
     }
     if args.uninstall {
-        for p in &args.profiles {
-            remove_unit(&unit_name(p)?)?;
+        let units = if args.all {
+            installed_units()?
+        } else {
+            args.profiles.iter().map(|p| unit_name(p)).collect::<Result<_>>()?
+        };
+        if units.is_empty() {
+            println!("no work-agent service installed");
+        }
+        for unit in &units {
+            remove_unit(unit)?;
         }
         return systemctl(&["daemon-reload"]);
     }
