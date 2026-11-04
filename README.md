@@ -91,7 +91,7 @@ files is added, changed or removed.
 | `defaults.runner` | `herdr` (workspace + interactive agent), `process` (`harness -p prompt`) or `command` (run a shell line directly in a herdr pane, no agent) |
 | `defaults.timeout_seconds` | max wall-clock per run |
 | `defaults.close_workspace_on_done` | close the herdr workspace once the agent settles |
-| `defaults.fresh_workspace` | always create a new workspace labelled `cron:<name>:<MM-DD HH:MM>` instead of reusing the task's (default `false`) |
+| `defaults.fresh_workspace` | always create a new workspace labelled `cron:<profile>/<name>:<MM-DD HH:MM>` instead of reusing the task's (default `false`) |
 | `exception_llm` | OpenAI-compatible endpoint used to evaluate `exception` rules |
 
 Per task file: `prompt` (required for the `herdr` and `process` runners),
@@ -151,6 +151,6 @@ the first is `google-calendar` (today / week / range / search as text or JSON).
 1. A task is due when a cron tick has elapsed since `last_run` (never-run tasks are due immediately).
 2. If it has an `exception`, the rendered rule is sent to the local model, which answers `SKIP` or `RUN`. An unreachable model never blocks a run.
 3. `<profile>/workstations/<name>/` is created if missing and the prompt gets the workstation preamble.
-4. If an agent named `<name>` is still alive it is prompted directly (a run is refused while it is still `working`). Otherwise the `cron:<name>` workspace is reused when still open (a free pane, or a new split), and only then `herdr workspace create --cwd <cwd>`. Then `herdr agent start <name> --kind <harness> -- <args>` → `herdr agent prompt <name> "<prompt>" --wait`. With `fresh_workspace: true` every run gets its own `cron:<name>:<MM-DD HH:MM>` workspace and agent.
-   `command` runner tasks skip the agent entirely: the `command` line is sent to a shell pane of the same `cron:<name>` workspace with `herdr pane run`, and the run settles when the pane's foreground process returns to its shell (polled via `herdr pane process-info`, bounded by `timeout_seconds`). The pane stays in your herdr session the whole time, so interactive prompts — e.g. `sudo`'s password — can be answered by hand.
+4. If an agent named `<name>` is still alive it is prompted directly (a run is refused while it is still `working`). Otherwise the `cron:<profile>/<name>` workspace is reused when still open (a free pane, or a new split), and only then `herdr workspace create --cwd <cwd>`. Then `herdr agent start <name> --kind <harness> -- <args>` → `herdr agent prompt <name> "<prompt>" --wait`. With `fresh_workspace: true` every run gets its own `cron:<profile>/<name>:<MM-DD HH:MM>` workspace and agent.
+   `command` runner tasks skip the agent entirely: the `command` line is sent to a shell pane of the same `cron:<profile>/<name>` workspace with `herdr pane run`, and the run settles when the pane's foreground process returns to its shell (polled via `herdr pane process-info`, bounded by `timeout_seconds`). The pane stays in your herdr session the whole time, so interactive prompts — e.g. `sudo`'s password — can be answered by hand.
 5. The outcome is written to the state file and the loop moves to the next task.

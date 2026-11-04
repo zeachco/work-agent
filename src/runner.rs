@@ -66,26 +66,26 @@ async fn wait_until_settled(task: &ResolvedTask, pane: &str) -> Result<()> {
 }
 
 /// Finds or creates the pane a task runs in. With `fresh_workspace` it is a
-/// new workspace labelled with `now`; otherwise the still-open `cron:<name>`
+/// new workspace labelled with `now`; otherwise the still-open `cron:<profile>/<name>`
 /// workspace is reused, and a new one is created only when none is open.
 /// Returns `(workspace_id, pane_id)`.
 async fn task_pane(task: &ResolvedTask, now: chrono::DateTime<chrono::Local>) -> Result<(String, String)> {
     if task.fresh_workspace {
-        let label = format!("{}:{}", workspace_label(&task.name), now.format("%m-%d %H:%M"));
+        let label = format!("{}:{}", workspace_label(task), now.format("%m-%d %H:%M"));
         return create_workspace(task, &label).await;
     }
-    match find_workspace(&task.name).await? {
+    match find_workspace(task).await? {
         Some(ws) => {
             let pane = shell_pane(&ws, task).await?;
             tracing::info!(task = %task.name, workspace_id = %ws, pane_id = %pane, "reusing herdr workspace");
             Ok((ws, pane))
         }
-        None => create_workspace(task, &workspace_label(&task.name)).await,
+        None => create_workspace(task, &workspace_label(task)).await,
     }
 }
 
 /// Runs the task inside herdr. Reuses the agent named after the task if it
-/// is still alive, otherwise reuses the `cron:<name>` workspace if it is still
+/// is still alive, otherwise reuses the `cron:<profile>/<name>` workspace if it is still
 /// open, and only creates a fresh workspace when neither exists.
 async fn run_herdr(task: &ResolvedTask, prompt: &str) -> Result<String> {
     if task.fresh_workspace {

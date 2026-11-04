@@ -7,8 +7,9 @@ use serde_json::Value;
 use std::process::Stdio;
 use tokio::process::Command;
 
-pub(crate) fn workspace_label(name: &str) -> String {
-    format!("cron:{name}")
+/// `cron:<profile>/<task>`, so tabs from different profiles are telling apart.
+pub(crate) fn workspace_label(task: &ResolvedTask) -> String {
+    format!("cron:{}/{}", task.profile, task.name)
 }
 
 /// The agent registered under the task name, if any.
@@ -19,9 +20,9 @@ pub(crate) async fn find_agent(name: &str) -> Result<Option<Value>> {
         .and_then(|a| a.iter().find(|a| a.get("name").and_then(Value::as_str) == Some(name)).cloned()))
 }
 
-/// The workspace labelled `cron:<name>`, if it is still open.
-pub(crate) async fn find_workspace(name: &str) -> Result<Option<String>> {
-    let label = workspace_label(name);
+/// The workspace labelled `cron:<profile>/<name>`, if it is still open.
+pub(crate) async fn find_workspace(task: &ResolvedTask) -> Result<Option<String>> {
+    let label = workspace_label(task);
     let v = herdr_json(&["workspace", "list"]).await.context("herdr workspace list")?;
     Ok(v.pointer("/result/workspaces")
         .and_then(Value::as_array)

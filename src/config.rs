@@ -344,6 +344,8 @@ fn valid_name(s: &str) -> bool {
 #[derive(Debug)]
 pub struct ResolvedTask {
     pub name: String,
+    /// Folder name of the profile the task belongs to (e.g. `stay22`).
+    pub profile: String,
     pub description: Option<String>,
     pub harness: String,
     pub args: Vec<String>,
@@ -374,6 +376,7 @@ impl Config {
                 let is_command = runner == Runner::Command;
                 ResolvedTask {
                     name: t.name.clone(),
+                    profile: self.profile.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
                     description: t.description.clone(),
                     harness: if is_command { "command".into() } else { t.harness.clone().unwrap_or_else(|| d.harness.clone()) },
                     args: if is_command { Vec::new() } else { t.args.clone().unwrap_or_else(|| d.args.clone()) },
