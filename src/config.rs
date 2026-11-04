@@ -206,22 +206,18 @@ impl Config {
                 crate::schedule::parse(schedule)
                     .with_context(|| format!("task `{}` has an invalid schedule", t.name))?;
             }
-            let runner = t.runner.unwrap_or(self.defaults.runner);
-            match runner {
-                Runner::Command => {
-                    anyhow::ensure!(
-                        t.command.is_some(),
-                        "task `{}` uses the command runner but has no `command`",
-                        t.name,
-                    );
-                }
-                _ => {
-                    anyhow::ensure!(
-                        t.prompt.is_some(),
-                        "task `{}` needs a `prompt` (the command runner needs `command` instead)",
-                        t.name,
-                    );
-                }
+            if t.runner.unwrap_or(self.defaults.runner) == Runner::Command {
+                anyhow::ensure!(
+                    t.command.is_some(),
+                    "task `{}` uses the command runner but has no `command`",
+                    t.name,
+                );
+            } else {
+                anyhow::ensure!(
+                    t.prompt.is_some(),
+                    "task `{}` needs a `prompt` (the command runner needs `command` instead)",
+                    t.name,
+                );
             }
         }
         Ok(())
@@ -312,7 +308,8 @@ impl Config {
             .iter()
             .filter(|t| t.enabled)
             .map(|t| {
-                let is_command = t.runner.unwrap_or(d.runner) == Runner::Command;
+                let runner = t.runner.unwrap_or(d.runner);
+                let is_command = runner == Runner::Command;
                 ResolvedTask {
                     name: t.name.clone(),
                     description: t.description.clone(),
@@ -321,14 +318,14 @@ impl Config {
                     prompt: t.prompt.clone(),
                     command: t.command.clone(),
                     cwd: t.cwd.clone().or_else(|| d.cwd.clone()).unwrap_or_else(|| {
-                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-                }),
-                workstation: self.workstations_dir.join(&t.name),
-                parallel: t.parallel,
-                schedule: t.schedule.clone(),
-                exception: t.exception.clone(),
-                runner: t.runner.unwrap_or(d.runner),
-                timeout_seconds: t.timeout_seconds.unwrap_or(d.timeout_seconds),
+                        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+                    }),
+                    workstation: self.workstations_dir.join(&t.name),
+                    parallel: t.parallel,
+                    schedule: t.schedule.clone(),
+                    exception: t.exception.clone(),
+                    runner,
+                    timeout_seconds: t.timeout_seconds.unwrap_or(d.timeout_seconds),
                     close_workspace_on_done: t
                         .close_workspace_on_done
                         .unwrap_or(d.close_workspace_on_done),
