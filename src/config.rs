@@ -165,6 +165,41 @@ impl Config {
 
 pub const CONFIG_FILE: &str = "config.toml";
 
+/// What a profile keeps out of git: daemon state and the per-task scratch
+/// files that are either sensitive (`short_memory.md`) or disposable. Written
+/// once, when the profile folder is created; existing files are left alone.
+const PROFILE_GITIGNORE: &str = "\
+# written by work-agent when this profile was created; edit freely
+/state.json
+/state.json.tmp
+# per-task scratch: only memory.md is worth tracking
+/workstations/*/short_memory.md
+/workstations/*/*
+!/workstations/*/memory.md
+";
+
+/// Creates a missing profile folder with `tasks/`, `workstations/` and a
+/// `.gitignore`, so a fresh path is ready to be `git init`ed. Leaves an
+/// existing folder untouched.
+pub fn scaffold(profile: &Path) -> Result<()> {
+    if profile.is_dir() {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        !profile.exists(),
+        "profile path {} exists but is not a folder",
+        profile.display()
+    );
+    for sub in [default_tasks_dir(), default_workstations_dir()] {
+        std::fs::create_dir_all(profile.join(sub))
+            .with_context(|| format!("creating profile {}", profile.display()))?;
+    }
+    std::fs::write(profile.join(".gitignore"), PROFILE_GITIGNORE)
+        .with_context(|| format!("writing {}/.gitignore", profile.display()))?;
+    tracing::info!(profile = %profile.display(), "created empty profile");
+    Ok(())
+}
+
 fn default_tick() -> u64 {
     60
 }
@@ -185,11 +220,7 @@ impl Config {
     /// Loads a profile folder: `<profile>/config.toml` when present (otherwise
     /// the built-in settings) plus every task under its `tasks_dir`.
     pub fn load(profile: &Path) -> Result<Self> {
-        anyhow::ensure!(
-            profile.is_dir(),
-            "profile folder {} does not exist (pass --profile <dir> or set WORK_AGENT_PROFILE)",
-            profile.display()
-        );
+        scaffold(profile)?;
         // Absolute so prompts carry usable paths even when the agent runs in another cwd.
         let base = std::fs::canonicalize(profile).unwrap_or_else(|_| profile.to_path_buf());
         let file = base.join(CONFIG_FILE);

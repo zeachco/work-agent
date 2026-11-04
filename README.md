@@ -16,15 +16,17 @@ different one:
 
 ```
 <profile>/
+  .gitignore         # state and short memories, written when the folder is created
   config.toml        # global settings, optional (built-in defaults otherwise)
   tasks/<name>.toml  # one file per task; the file stem is the task name
   workstations/      # per-task memory boards, created by the daemon
-  state.json         # last-run timestamps, written by the daemon
+  state.json         # last-run timestamps, written by the daemon (gitignored)
 ```
 
 `--profile <dir>` or `WORK_AGENT_PROFILE` selects the folder; the default
-is `~/.config/work-agent/default`. `examples/` is a complete profile you can
-run as is.
+is `~/.config/work-agent/default`. A path that does not exist yet is created
+with `tasks/`, `workstations/` and the `.gitignore` above, ready for
+`git init`. `examples/` is a complete profile you can run as is.
 
 ## Run
 
@@ -100,14 +102,15 @@ Every task owns `<profile>/workstations/<name>/`, a memory board that
 survives across runs:
 
 ```
-workstations/<name>/memory.md   # notes the agent keeps for its next run
-workstations/<name>/...         # temp files and reusable artifacts, e.g. say-hello/format.py
+workstations/<name>/memory.md        # notes the agent keeps for its next run (tracked: no secrets, ever)
+workstations/<name>/short_memory.md  # secrets, sensitive matter, unimportant details (gitignored)
+workstations/<name>/...              # temp files and reusable artifacts, e.g. say-hello/format.py (gitignored)
 ```
 
-Before each run the daemon creates the directory (and a stub `memory.md` on
+Before each run the daemon creates the directory (and stub memory files on
 first run) and prepends a note to the prompt telling the agent to read and
-update `memory.md` and to drop temp files and scripts there instead of in the
-working tree. Use `${workstation}` in a prompt to reference it explicitly.
+update both memories, to keep secrets out of `memory.md`, and to drop temp
+files and scripts there instead of in the working tree. Use `${workstation}` in a prompt to reference it explicitly.
 Delete the directory to reset a task's memory.
 
 ## Addons

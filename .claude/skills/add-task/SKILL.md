@@ -60,8 +60,10 @@ config list), `${task}` (task name), `${workstation}` (the task's scratch dir,
 ## Workstation (memory board)
 
 Each task gets `<profile>/workstations/<name>/`, created on first run with a
-`memory.md`. The daemon prepends a note to every prompt asking the agent to read
-and update `memory.md` and to keep temp files and reusable scripts there
+`memory.md` (tracked in git when the profile is a repo, so never secrets) and a
+`short_memory.md` (gitignored: secrets, sensitive matter, unimportant details).
+The daemon prepends a note to every prompt asking the agent to read and update
+both and to keep temp files and reusable scripts there
 (e.g. `workstations/say-hello/format.py`). You do not need to mention it in the
 prompt, but use `${workstation}` when the task should write a specific file
 there, e.g. `"prompt": "... append today's summary to ${workstation}/log.md"`.
