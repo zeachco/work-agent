@@ -25,47 +25,11 @@ async fn run_command(task: &ResolvedTask) -> Result<String> {
         .command
         .as_ref()
         .context("command runner needs a `command` field")?;
-    let (ws, pane) = if task.fresh_workspace {
-        let stamp = chrono::Local::now().format("%m-%d %H:%M");
-        create_workspace(task, &format!("{}:{}", workspace_label(&task.name), stamp)).await?
-    } else {
-        match find_workspace(&task.name).await? {
-            Some(ws) => {
-                let pane = shell_pane(&ws, task).await?;
-                tracing::info!(task = %task.name, workspace_id = %ws, pane_id = %pane, "reusing herdr workspace");
-                (ws, pane)
-            }
-            None => create_workspace(task, &workspace_label(&task.name)).await?,
-        }
-    };
+    let (ws, pane) = task_pane(task, chrono::Local::now()).await?;
     herdr_json(&["pane", "run", &pane, command])
         .await
         .context("herdr pane run")?;
-    // Poll the pane's foreground process until it is the shell again. The
-    // first check is delayed so the shell has parsed the line and the command
-    // is actually in the foreground; an instant check would see the idle shell
-    // and declare the run done.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(task.timeout_seconds);
-    loop {
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        let v = herdr_json(&["pane", "process-info", "--pane", &pane])
-            .await
-            .context("herdr pane process-info")?;
-        let info = v.pointer("/result/process_info").context("process-info returned no data")?;
-        let settled = match (
-            info.get("foreground_process_group_id").and_then(Value::as_u64),
-            info.get("shell_pid").and_then(Value::as_u64),
-        ) {
-            (Some(fg), Some(shell)) => fg == shell,
-            _ => false,
-        };
-        if settled {
-            break;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            bail!("command did not settle within {}s", task.timeout_seconds);
-        }
-    }
+    wait_until_settled(task, &pane).await?;
     if task.close_workspace_on_done {
         if let Err(e) = herdr_json(&["workspace", "close", &ws]).await {
             tracing::warn!(task = %task.name, "failed to close workspace: {e:#}");
@@ -74,15 +38,60 @@ async fn run_command(task: &ResolvedTask) -> Result<String> {
     Ok("settled".into())
 }
 
+/// How often a command pane is checked for completion. Also the delay before
+/// the first check, so the shell has parsed the line and the command is
+/// actually in the foreground; an instant check would see the idle shell and
+/// declare the run done.
+const SETTLE_POLL: Duration = Duration::from_secs(2);
+
+/// Polls the pane until its foreground process is the shell again, or the
+/// task's timeout elapses.
+async fn wait_until_settled(task: &ResolvedTask, pane: &str) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(task.timeout_seconds);
+    loop {
+        tokio::time::sleep(SETTLE_POLL).await;
+        let v = herdr_json(&["pane", "process-info", "--pane", pane])
+            .await
+            .context("herdr pane process-info")?;
+        let info = v.pointer("/result/process_info").context("process-info returned no data")?;
+        let foreground = info.get("foreground_process_group_id").and_then(Value::as_u64);
+        let shell = info.get("shell_pid").and_then(Value::as_u64);
+        if foreground.zip(shell).is_some_and(|(fg, sh)| fg == sh) {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!("command did not settle within {}s", task.timeout_seconds);
+        }
+    }
+}
+
+/// Finds or creates the pane a task runs in. With `fresh_workspace` it is a
+/// new workspace labelled with `now`; otherwise the still-open `cron:<name>`
+/// workspace is reused, and a new one is created only when none is open.
+/// Returns `(workspace_id, pane_id)`.
+async fn task_pane(task: &ResolvedTask, now: chrono::DateTime<chrono::Local>) -> Result<(String, String)> {
+    if task.fresh_workspace {
+        let label = format!("{}:{}", workspace_label(&task.name), now.format("%m-%d %H:%M"));
+        return create_workspace(task, &label).await;
+    }
+    match find_workspace(&task.name).await? {
+        Some(ws) => {
+            let pane = shell_pane(&ws, task).await?;
+            tracing::info!(task = %task.name, workspace_id = %ws, pane_id = %pane, "reusing herdr workspace");
+            Ok((ws, pane))
+        }
+        None => create_workspace(task, &workspace_label(&task.name)).await,
+    }
+}
+
 /// Runs the task inside herdr. Reuses the agent named after the task if it
 /// is still alive, otherwise reuses the `cron:<name>` workspace if it is still
 /// open, and only creates a fresh workspace when neither exists.
 async fn run_herdr(task: &ResolvedTask, prompt: &str) -> Result<String> {
     if task.fresh_workspace {
-        let stamp = chrono::Local::now();
-        let label = format!("{}:{}", workspace_label(&task.name), stamp.format("%m-%d %H:%M"));
-        let agent = format!("{}-{}", task.name, stamp.format("%m%d-%H%M"));
-        let (ws, pane) = create_workspace(task, &label).await?;
+        let now = chrono::Local::now();
+        let agent = format!("{}-{}", task.name, now.format("%m%d-%H%M"));
+        let (ws, pane) = task_pane(task, now).await?;
         start_agent(task, &agent, &pane).await?;
         return prompt_and_finish(task, &agent, &ws, prompt).await;
     }
@@ -96,24 +105,13 @@ async fn run_herdr(task: &ResolvedTask, prompt: &str) -> Result<String> {
             tracing::info!(task = %task.name, workspace_id = %ws, %status, "reusing running herdr agent");
             ws
         }
-        None => start_agent_in_workspace(task).await?,
+        None => {
+            let (ws, pane) = task_pane(task, chrono::Local::now()).await?;
+            start_agent(task, &task.name, &pane).await?;
+            ws
+        }
     };
     prompt_and_finish(task, &task.name, &workspace_id, prompt).await
-}
-
-/// Starts the task's agent in its `cron:<name>` workspace, reusing the
-/// workspace when it is still open. Returns the workspace id.
-async fn start_agent_in_workspace(task: &ResolvedTask) -> Result<String> {
-    let (ws, pane) = match find_workspace(&task.name).await? {
-        Some(ws) => {
-            let pane = shell_pane(&ws, task).await?;
-            tracing::info!(task = %task.name, workspace_id = %ws, pane_id = %pane, "reusing herdr workspace");
-            (ws, pane)
-        }
-        None => create_workspace(task, &workspace_label(&task.name)).await?,
-    };
-    start_agent(task, &task.name, &pane).await?;
-    Ok(ws)
 }
 
 async fn prompt_and_finish(task: &ResolvedTask, agent: &str, workspace_id: &str, prompt: &str) -> Result<String> {
