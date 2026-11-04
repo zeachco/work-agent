@@ -1,6 +1,6 @@
 //! Per-task scratch directories ("workstations").
 //!
-//! `<workstations_dir>/<task>/` is gitignored and persists across runs. It holds
+//! `<workstations_dir>/<task>/` lives in the profile and persists across runs. It holds
 //! `memory.md` (notes the agent keeps for its future self) and any helper file
 //! the agent decides to keep, e.g. `workstations/say-hello/format.py`.
 
@@ -29,7 +29,7 @@ pub fn prepare(dir: &Path) -> Result<()> {
 pub fn with_preamble(prompt: &str, dir: &Path) -> String {
     let dir = dir.display();
     format!(
-        "Your workstation is `{dir}` (gitignored, persists across runs). \
+        "Your workstation is `{dir}` (outside the working tree, persists across runs). \
          Read `{dir}/{MEMORY_FILE}` first and update it before finishing with anything worth remembering next time. \
          Put temp files and any script or artifact you want to reuse in that directory, not in the working tree.\n\n{prompt}"
     )

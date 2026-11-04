@@ -21,9 +21,11 @@ use tracing::{error, info, warn};
 #[derive(Parser)]
 #[command(name = "work-agent", version, about = "Scheduled agent-task orchestrator")]
 struct Cli {
-    /// Path to `config.toml`; tasks are read from `tasks/*.toml` next to it.
-    #[arg(short, long, default_value = "config.toml", env = "CRONS_CONFIG")]
-    config: PathBuf,
+    /// Profile folder: `config.toml` (optional), `tasks/`, `workstations/` and
+    /// `state.json` live there, outside this repo, so a profile can be its own
+    /// (private) repository and one checkout can hold several of them.
+    #[arg(short, long, env = "WORK_AGENT_PROFILE", default_value_os_t = default_profile())]
+    profile: PathBuf,
     #[command(subcommand)]
     cmd: Option<Cmd>,
 }
@@ -50,11 +52,11 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let cli = Cli::parse();
-    let cfg = Config::load(&cli.config)?;
+    let cfg = Config::load(&cli.profile)?;
 
     match cli.cmd.unwrap_or(Cmd::Daemon) {
         Cmd::Check => {
-            println!("ok: {} task(s)", cfg.tasks.len());
+            println!("ok: {} task(s) in profile {}", cfg.tasks.len(), cfg.profile.display());
         }
         Cmd::List => print_schedule(&cfg)?,
         Cmd::Show => show_task(&cfg)?,
@@ -68,9 +70,19 @@ async fn main() -> Result<()> {
             let store = Arc::new(Mutex::new(Store::load(&cfg.state_file)?));
             execute(task, &cfg, store).await;
         }
-        Cmd::Daemon => daemon(cfg, cli.config).await?,
+        Cmd::Daemon => daemon(cfg, cli.profile).await?,
     }
     Ok(())
+}
+
+/// `$XDG_CONFIG_HOME/work-agent/default`, the profile used when none is given.
+fn default_profile() -> PathBuf {
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    config_home.join("work-agent").join("default")
 }
 
 /// `list`: every task with its schedule, last/next run and whether it is due now.
@@ -165,15 +177,15 @@ fn print_runnable(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-async fn daemon(cfg: Config, path: PathBuf) -> Result<()> {
+async fn daemon(cfg: Config, profile: PathBuf) -> Result<()> {
     let store = Arc::new(Mutex::new(Store::load(&cfg.state_file)?));
     let mut cfg = Arc::new(cfg);
-    let mut last_modified = modified_at(&path);
-    info!(tasks = cfg.tasks.len(), tick = cfg.tick_seconds, "work-agent daemon started");
+    let mut last_modified = modified_at(&profile);
+    info!(profile = %cfg.profile.display(), tasks = cfg.tasks.len(), tick = cfg.tick_seconds, "work-agent daemon started");
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
     loop {
         ticker.tick().await;
-        if let Some(fresh) = reload_if_changed(&path, &mut last_modified) {
+        if let Some(fresh) = reload_if_changed(&profile, &mut last_modified) {
             cfg = Arc::new(fresh);
             ticker = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
             ticker.tick().await; // first tick of a new interval fires immediately
@@ -203,16 +215,16 @@ async fn daemon(cfg: Config, path: PathBuf) -> Result<()> {
     }
 }
 
-/// Picks up edits to `config.toml` and any file added, removed or changed
-/// under `tasks/`. A broken config keeps the last good one (returns None);
-/// tasks already running keep the config they started with.
-fn reload_if_changed(path: &Path, last_modified: &mut Fingerprint) -> Option<Config> {
-    let modified = modified_at(path);
+/// Picks up edits to the profile's `config.toml` and any file added, removed
+/// or changed under its `tasks/`. A broken config keeps the last good one
+/// (returns None); tasks already running keep the config they started with.
+fn reload_if_changed(profile: &Path, last_modified: &mut Fingerprint) -> Option<Config> {
+    let modified = modified_at(profile);
     if modified == *last_modified {
         return None;
     }
     *last_modified = modified;
-    match Config::load(path) {
+    match Config::load(profile) {
         Ok(fresh) => {
             info!(tasks = fresh.tasks.len(), "config reloaded");
             Some(fresh)
@@ -227,8 +239,8 @@ fn reload_if_changed(path: &Path, last_modified: &mut Fingerprint) -> Option<Con
 /// Every source file with its modification time; `None` for an unreadable one.
 type Fingerprint = Vec<(PathBuf, Option<SystemTime>)>;
 
-fn modified_at(config: &Path) -> Fingerprint {
-    Config::source_files(config)
+fn modified_at(profile: &Path) -> Fingerprint {
+    Config::source_files(profile)
         .into_iter()
         .map(|p| {
             let m = std::fs::metadata(&p).and_then(|m| m.modified()).ok();

@@ -6,38 +6,58 @@ either through a coding harness (`pi` by default, `claude`, or anything
 shell command in a herdr pane. Only one task runs at a time unless it opts
 into `parallel`.
 
+## Profiles
+
+Nothing personal lives in this repo. Everything the daemon reads or writes
+sits in a **profile folder** that you point it at, so it can be its own
+(private) git repository, and one checkout can hold several profiles
+(`work/`, `personal/`, ...) with each machine, or each daemon, pointed at a
+different one:
+
+```
+<profile>/
+  config.toml        # global settings, optional (built-in defaults otherwise)
+  tasks/<name>.toml  # one file per task; the file stem is the task name
+  workstations/      # per-task memory boards, created by the daemon
+  state.json         # last-run timestamps, written by the daemon
+```
+
+`--profile <dir>` or `WORK_AGENT_PROFILE` selects the folder; the default
+is `~/.config/work-agent/default`. `examples/` is a complete profile you can
+run as is.
+
 ## Run
 
 ```sh
-cp config.example.toml config.toml           # global settings
-cp examples/tasks/daily-standup-notes.toml tasks/   # one file per task
+mkdir -p ~/.config/work-agent/default/tasks
+cp examples/config.toml ~/.config/work-agent/default/           # global settings
+cp examples/tasks/daily-standup-notes.toml ~/.config/work-agent/default/tasks/
 cargo run -- check                 # validate config and every task file
 cargo run -- list                  # show schedule / last run / next run
 cargo run -- run daily-standup-notes   # force one task now
 cargo run -- run release-notes         # start a manual task (no schedule)
 cargo run -- run                       # list runnable tasks: last/next run, harness/model, description
 cargo run                          # daemon (same as `cargo run -- daemon`)
+cargo run -- --profile ~/agent-profiles/work daemon   # another profile, e.g. a private repo checkout
 ```
 
-`--config <path>` or `CRONS_CONFIG` selects `config.toml`; tasks are read
-from the `tasks/` folder next to it (`tasks_dir`). `RUST_LOG=debug`
-shows every herdr call. The daemon must itself run inside a herdr session
-(or on a machine where `herdr` can reach the running server) when tasks use
-the default `herdr` runner.
+`RUST_LOG=debug` shows every herdr call. The daemon must itself run inside a
+herdr session (or on a machine where `herdr` can reach the running server)
+when tasks use the default `herdr` runner.
 
 ## Config
 
-`config.toml` holds the global settings; each task is its own
-`tasks/<name>.toml` (gitignored, examples in `examples/tasks/`). The file
+`<profile>/config.toml` holds the global settings; each task is its own
+`<profile>/tasks/<name>.toml` (examples in `examples/tasks/`). The file
 stem is the task name. The daemon reloads on its next tick when any of these
 files is added, changed or removed.
 
 | key | meaning |
 |---|---|
 | `tick_seconds` | how often the loop looks for due tasks |
-| `state_file` | JSON file storing last-run timestamps (relative to the config) |
-| `workstations_dir` | per-task scratch root, default `workstations` (relative to the config, gitignored) |
-| `tasks_dir` | folder of task files, default `tasks` (relative to the config) |
+| `state_file` | JSON file storing last-run timestamps, default `state.json` (relative to the profile) |
+| `workstations_dir` | per-task scratch root, default `workstations` (relative to the profile) |
+| `tasks_dir` | folder of task files, default `tasks` (relative to the profile) |
 | `holidays` | dates exposed to prompts as `${holidays}` |
 | `defaults.harness` | `pi`, `claude`, `codex`, ... (any `herdr agent start --kind`) |
 | `defaults.args` | harness arguments, e.g. `["--model", "llamacpp/gemma-4-E4B-it"]` |
@@ -76,7 +96,7 @@ Prompts and exception rules accept `${date}`, `${time}`, `${datetime}`,
 
 ## Workstations
 
-Every task owns `workstations/<name>/`, a gitignored memory board that
+Every task owns `<profile>/workstations/<name>/`, a memory board that
 survives across runs:
 
 ```
@@ -102,7 +122,7 @@ the first is `google-calendar` (today / week / range / search as text or JSON).
 
 1. A task is due when a cron tick has elapsed since `last_run` (never-run tasks are due immediately).
 2. If it has an `exception`, the rendered rule is sent to the local model, which answers `SKIP` or `RUN`. An unreachable model never blocks a run.
-3. `workstations/<name>/` is created if missing and the prompt gets the workstation preamble.
+3. `<profile>/workstations/<name>/` is created if missing and the prompt gets the workstation preamble.
 4. If an agent named `<name>` is still alive it is prompted directly (a run is refused while it is still `working`). Otherwise the `cron:<name>` workspace is reused when still open (a free pane, or a new split), and only then `herdr workspace create --cwd <cwd>`. Then `herdr agent start <name> --kind <harness> -- <args>` → `herdr agent prompt <name> "<prompt>" --wait`. With `fresh_workspace: true` every run gets its own `cron:<name>:<MM-DD HH:MM>` workspace and agent.
    `command` runner tasks skip the agent entirely: the `command` line is sent to a shell pane of the same `cron:<name>` workspace with `herdr pane run`, and the run settles when the pane's foreground process returns to its shell (polled via `herdr pane process-info`, bounded by `timeout_seconds`). The pane stays in your herdr session the whole time, so interactive prompts — e.g. `sudo`'s password — can be answered by hand.
 5. The outcome is written to the state file and the loop moves to the next task.

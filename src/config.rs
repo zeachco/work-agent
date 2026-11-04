@@ -2,24 +2,26 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-/// Global settings from `config.toml` (see `config.example.toml`). Tasks are
-/// not in this file: each one is its own `<tasks_dir>/<name>.toml`.
+/// Global settings from `<profile>/config.toml` (see `examples/config.toml`).
+/// The file is optional: a profile folder holding only `tasks/` runs with the
+/// built-in defaults. Tasks are not in this file: each one is its own
+/// `<tasks_dir>/<name>.toml`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// How often the daemon wakes up to look for due tasks, in seconds.
     #[serde(default = "default_tick")]
     pub tick_seconds: u64,
-    /// Where `last run` timestamps are persisted (relative to the config file).
+    /// Where `last run` timestamps are persisted (relative to the profile).
     #[serde(default = "default_state_file")]
     pub state_file: PathBuf,
-    /// Per-task scratch area (relative to the config file). Each task gets
+    /// Per-task scratch area (relative to the profile). Each task gets
     /// `<workstations_dir>/<name>/` with a `memory.md` for notes carried across
     /// runs plus any helper files the agent wants to keep. Exposed to prompts as
     /// `${workstation}`.
     #[serde(default = "default_workstations_dir")]
     pub workstations_dir: PathBuf,
-    /// Folder of task files (relative to the config file). Every `*.toml` in it
+    /// Folder of task files (relative to the profile). Every `*.toml` in it
     /// is one task whose name is the file stem; files are loaded in name order.
     #[serde(default = "default_tasks_dir")]
     pub tasks_dir: PathBuf,
@@ -34,6 +36,9 @@ pub struct Config {
     pub holidays: Vec<String>,
     #[serde(skip)]
     pub tasks: Vec<Task>,
+    /// The profile folder everything above was resolved against.
+    #[serde(skip)]
+    pub profile: PathBuf,
 }
 
 /// Missing fields fall back to `Defaults::default()`, the single source of
@@ -141,6 +146,25 @@ pub struct Task {
     pub fresh_workspace: Option<bool>,
 }
 
+impl Config {
+    /// The built-in settings, used when a profile has no `config.toml`.
+    fn builtin() -> Self {
+        Self {
+            tick_seconds: default_tick(),
+            state_file: default_state_file(),
+            workstations_dir: default_workstations_dir(),
+            tasks_dir: default_tasks_dir(),
+            defaults: Defaults::default(),
+            exception_llm: ExceptionLlm::default(),
+            holidays: Vec::new(),
+            tasks: Vec::new(),
+            profile: PathBuf::new(),
+        }
+    }
+}
+
+pub const CONFIG_FILE: &str = "config.toml";
+
 fn default_tick() -> u64 {
     60
 }
@@ -158,18 +182,24 @@ fn default_true() -> bool {
 }
 
 impl Config {
-    pub fn load(path: &Path) -> Result<Self> {
-        let raw = std::fs::read_to_string(path)
-            .with_context(|| format!("reading config {}", path.display()))?;
-        let mut cfg: Config = toml::from_str(&raw)
-            .with_context(|| format!("parsing config {}", path.display()))?;
+    /// Loads a profile folder: `<profile>/config.toml` when present (otherwise
+    /// the built-in settings) plus every task under its `tasks_dir`.
+    pub fn load(profile: &Path) -> Result<Self> {
+        anyhow::ensure!(
+            profile.is_dir(),
+            "profile folder {} does not exist (pass --profile <dir> or set WORK_AGENT_PROFILE)",
+            profile.display()
+        );
         // Absolute so prompts carry usable paths even when the agent runs in another cwd.
-        let base = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
-        let base = std::fs::canonicalize(&base).unwrap_or(base);
+        let base = std::fs::canonicalize(profile).unwrap_or_else(|_| profile.to_path_buf());
+        let file = base.join(CONFIG_FILE);
+        let mut cfg = if file.is_file() {
+            let raw = std::fs::read_to_string(&file)
+                .with_context(|| format!("reading config {}", file.display()))?;
+            toml::from_str(&raw).with_context(|| format!("parsing config {}", file.display()))?
+        } else {
+            Config::builtin()
+        };
         if cfg.state_file.is_relative() {
             cfg.state_file = base.join(&cfg.state_file);
         }
@@ -180,14 +210,15 @@ impl Config {
             cfg.tasks_dir = base.join(&cfg.tasks_dir);
         }
         cfg.tasks = load_tasks(&cfg.tasks_dir)?;
+        cfg.profile = base;
         cfg.validate()?;
         Ok(cfg)
     }
 
     /// Every file the config is built from, so the daemon can notice edits.
-    pub fn source_files(config: &Path) -> Vec<PathBuf> {
-        let mut files = vec![config.to_path_buf()];
-        if let Ok(cfg) = Self::load(config) {
+    pub fn source_files(profile: &Path) -> Vec<PathBuf> {
+        let mut files = vec![profile.join(CONFIG_FILE)];
+        if let Ok(cfg) = Self::load(profile) {
             files.extend(task_files(&cfg.tasks_dir).unwrap_or_default());
         }
         files
@@ -241,7 +272,7 @@ impl ResolvedTask {
 }
 
 /// `<tasks_dir>/*.toml`, sorted by file name. A missing folder is an error:
-/// a daemon with nothing to run is almost always a wrong `--config`.
+/// a daemon with nothing to run is almost always a wrong `--profile`.
 pub fn task_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let entries = std::fs::read_dir(dir)
         .with_context(|| format!("reading tasks folder {}", dir.display()))?;
