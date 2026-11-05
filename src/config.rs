@@ -252,8 +252,9 @@ impl Config {
             anyhow::ensure!(seen.insert(&t.name), "duplicate task name `{}`", t.name);
             anyhow::ensure!(
                 valid_name(&t.name),
-                "task file name `{}.toml` must match [a-z][a-z0-9_-]{{0,31}}",
-                t.name
+                "task file name `{}.toml` must match [a-z][a-z0-9_-]{{0,{}}}",
+                t.name,
+                MAX_TASK_NAME_LEN - 1
             );
             if let Some(schedule) = &t.schedule {
                 crate::schedule::parse(schedule)
@@ -274,22 +275,6 @@ impl Config {
             }
         }
         Ok(())
-    }
-}
-
-impl ResolvedTask {
-    /// The value following `--model` in the harness args, if any.
-    pub fn model(&self) -> Option<&str> {
-        let mut it = self.args.iter();
-        while let Some(a) = it.next() {
-            if a == "--model" {
-                return it.next().map(String::as_str);
-            }
-            if let Some(m) = a.strip_prefix("--model=") {
-                return Some(m);
-            }
-        }
-        None
     }
 }
 
@@ -324,10 +309,13 @@ fn load_tasks(dir: &Path) -> Result<Vec<Task>> {
         .collect()
 }
 
+/// Upper bound on a task name (the file stem, also used as the herdr agent name).
+const MAX_TASK_NAME_LEN: usize = 32;
+
 fn valid_name(s: &str) -> bool {
     let mut chars = s.chars();
     matches!(chars.next(), Some('a'..='z'))
-        && s.len() <= 32
+        && s.len() <= MAX_TASK_NAME_LEN
         && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '_' | '-'))
 }
 
@@ -356,9 +344,26 @@ pub struct ResolvedTask {
     pub fresh_workspace: bool,
 }
 
+impl ResolvedTask {
+    /// The value following `--model` in the harness args, if any.
+    pub fn model(&self) -> Option<&str> {
+        let mut it = self.args.iter();
+        while let Some(a) = it.next() {
+            if a == "--model" {
+                return it.next().map(String::as_str);
+            }
+            if let Some(m) = a.strip_prefix("--model=") {
+                return Some(m);
+            }
+        }
+        None
+    }
+}
+
 impl Config {
     pub fn resolved_tasks(&self) -> Vec<ResolvedTask> {
         let d = &self.defaults;
+        let profile = self.profile.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         self.tasks
             .iter()
             .filter(|t| t.enabled)
@@ -368,7 +373,7 @@ impl Config {
                 let workstation = self.workstations_dir.join(&t.name);
                 ResolvedTask {
                     name: t.name.clone(),
-                    profile: self.profile.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                    profile: profile.clone(),
                     description: t.description.clone(),
                     harness: if is_command { "command".into() } else { t.harness.clone().unwrap_or_else(|| d.harness.clone()) },
                     args: if is_command { Vec::new() } else { t.args.clone().unwrap_or_else(|| d.args.clone()) },
