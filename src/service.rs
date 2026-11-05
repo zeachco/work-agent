@@ -64,8 +64,9 @@ fn install(profiles: &[PathBuf], keep_others: bool) -> Result<()> {
     // Resolve everything first so a bad path aborts before anything is removed.
     let mut wanted = Vec::new();
     for profile in profiles {
-        crate::config::scaffold(profile)?;
-        let profile = std::fs::canonicalize(profile)?;
+        let profile = crate::config::expand_home(profile);
+        crate::config::scaffold(&profile)?;
+        let profile = std::fs::canonicalize(&profile)?;
         let unit = unit_name(&profile)?;
         anyhow::ensure!(
             !wanted.iter().any(|(_, u)| *u == unit),

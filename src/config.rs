@@ -227,11 +227,16 @@ impl Config {
         let mut cfg: Config =
             toml::from_str(&raw).with_context(|| format!("parsing config {}", file.display()))?;
         for path in [&mut cfg.state_file, &mut cfg.workstations_dir, &mut cfg.tasks_dir] {
+            *path = expand_home(path);
             if path.is_relative() {
                 *path = base.join(&*path);
             }
         }
+        cfg.defaults.cwd = cfg.defaults.cwd.as_deref().map(expand_home);
         cfg.tasks = load_tasks(&cfg.tasks_dir)?;
+        for t in &mut cfg.tasks {
+            t.cwd = t.cwd.as_deref().map(expand_home);
+        }
         cfg.profile = base;
         cfg.validate()?;
         Ok(cfg)
@@ -275,6 +280,20 @@ impl Config {
             }
         }
         Ok(())
+    }
+}
+
+/// `~` or `~/...` → `$HOME`-based path. Anything else is returned as is.
+pub fn expand_home(path: &Path) -> PathBuf {
+    let Some(rest) = path.to_str().and_then(|s| s.strip_prefix('~')) else {
+        return path.to_path_buf();
+    };
+    if !(rest.is_empty() || rest.starts_with('/')) {
+        return path.to_path_buf();
+    }
+    match std::env::var_os("HOME") {
+        Some(home) => PathBuf::from(home).join(rest.trim_start_matches('/')),
+        None => path.to_path_buf(),
     }
 }
 

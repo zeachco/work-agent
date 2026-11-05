@@ -106,7 +106,7 @@ task's workstation; a configured `cwd` must exist or the run is refused), `paral
 schedule = "*/30 * * * *"
 harness = "claude"
 args = ["--model", "claude-sonnet-5-5"]
-cwd = "/Users/jane/projects/my-app"
+cwd = "~/projects/my-app"
 parallel = true
 prompt = '''
 Check the latest CI run on main with `gh run list`; if it failed,

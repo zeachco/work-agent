@@ -58,15 +58,16 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let cli = Cli::parse();
+    let profile = crate::config::expand_home(&cli.profile);
     // Loaded per arm: `service` manages other profiles and must not need this one.
-    let load = || Config::load(&cli.profile);
+    let load = || Config::load(&profile);
     match cli.cmd.unwrap_or(Cmd::Daemon) {
         Cmd::Check => check(&load()?),
         Cmd::List => print_schedule(&load()?),
         Cmd::Show => show_task(&load()?),
         Cmd::Run { name: None } => print_runnable(&load()?),
         Cmd::Run { name: Some(name) } => run_one(&load()?, &name).await,
-        Cmd::Daemon => daemon(load()?, cli.profile).await,
+        Cmd::Daemon => daemon(load()?, profile.clone()).await,
         Cmd::Service(args) => service::run(args),
     }
 }
