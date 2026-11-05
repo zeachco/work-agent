@@ -147,6 +147,15 @@ pub struct Task {
     pub fresh_workspace: Option<bool>,
 }
 
+/// `$XDG_CONFIG_HOME` when it is absolute, else `$HOME/.config`; `None` when
+/// neither variable is set. Callers pick their own fallback.
+pub fn user_config_home() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+}
+
 impl Config {
     /// The built-in settings, used when a profile has no `config.toml`.
     fn builtin() -> Self {

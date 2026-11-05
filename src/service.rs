@@ -159,11 +159,7 @@ fn unit_name(profile: &Path) -> Result<String> {
 }
 
 fn unit_dir() -> Result<PathBuf> {
-    let home = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .context("neither XDG_CONFIG_HOME nor HOME is set")?;
+    let home = crate::config::user_config_home().context("neither XDG_CONFIG_HOME nor HOME is set")?;
     Ok(home.join("systemd").join("user"))
 }
 
