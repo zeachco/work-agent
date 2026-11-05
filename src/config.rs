@@ -156,22 +156,6 @@ pub fn user_config_home() -> Option<PathBuf> {
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
 }
 
-impl Config {
-    /// The built-in settings, used when a profile has no `config.toml`.
-    fn builtin() -> Self {
-        Self {
-            tick_seconds: default_tick(),
-            state_file: default_state_file(),
-            workstations_dir: default_workstations_dir(),
-            tasks_dir: default_tasks_dir(),
-            defaults: Defaults::default(),
-            exception_llm: ExceptionLlm::default(),
-            holidays: Vec::new(),
-            tasks: Vec::new(),
-            profile: PathBuf::new(),
-        }
-    }
-}
 
 pub const CONFIG_FILE: &str = "config.toml";
 
@@ -234,21 +218,18 @@ impl Config {
         // Absolute so prompts carry usable paths even when the agent runs in another cwd.
         let base = std::fs::canonicalize(profile).unwrap_or_else(|_| profile.to_path_buf());
         let file = base.join(CONFIG_FILE);
-        let mut cfg = if file.is_file() {
-            let raw = std::fs::read_to_string(&file)
-                .with_context(|| format!("reading config {}", file.display()))?;
-            toml::from_str(&raw).with_context(|| format!("parsing config {}", file.display()))?
+        // Every field has a serde default, so a missing file is an empty one.
+        let raw = if file.is_file() {
+            std::fs::read_to_string(&file).with_context(|| format!("reading config {}", file.display()))?
         } else {
-            Config::builtin()
+            String::new()
         };
-        if cfg.state_file.is_relative() {
-            cfg.state_file = base.join(&cfg.state_file);
-        }
-        if cfg.workstations_dir.is_relative() {
-            cfg.workstations_dir = base.join(&cfg.workstations_dir);
-        }
-        if cfg.tasks_dir.is_relative() {
-            cfg.tasks_dir = base.join(&cfg.tasks_dir);
+        let mut cfg: Config =
+            toml::from_str(&raw).with_context(|| format!("parsing config {}", file.display()))?;
+        for path in [&mut cfg.state_file, &mut cfg.workstations_dir, &mut cfg.tasks_dir] {
+            if path.is_relative() {
+                *path = base.join(&*path);
+            }
         }
         cfg.tasks = load_tasks(&cfg.tasks_dir)?;
         cfg.profile = base;
