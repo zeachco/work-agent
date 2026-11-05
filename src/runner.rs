@@ -134,6 +134,8 @@ async fn run_process(task: &ResolvedTask, prompt: &str) -> Result<String> {
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+    // why: harness CLI contract — pi and claude take the prompt behind `-p`,
+    // any other harness takes it as a bare positional argument.
     match task.harness.as_str() {
         "pi" | "claude" => { cmd.arg("-p").arg(prompt); }
         _ => { cmd.arg(prompt); }
