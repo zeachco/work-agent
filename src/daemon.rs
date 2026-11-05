@@ -31,14 +31,7 @@ pub async fn daemon(cfg: Config, profile: PathBuf) -> Result<()> {
         for task in cfg.resolved_tasks() {
             // Manual tasks (no schedule) are never due here; only `run <name>` starts them.
             let Some(expr) = task.schedule.as_deref() else { continue };
-            let due = {
-                let s = store.lock().await;
-                match schedule::is_due(expr, s.last_run(&task.name), Local::now()) {
-                    Ok(d) => d,
-                    Err(e) => { error!(task = %task.name, "schedule error: {e:#}"); false }
-                }
-            };
-            if !due {
+            if !is_due(&store, &task.name, expr).await {
                 continue;
             }
             if task.parallel {
@@ -47,6 +40,19 @@ pub async fn daemon(cfg: Config, profile: PathBuf) -> Result<()> {
             } else {
                 execute(task, &cfg, store.clone()).await;
             }
+        }
+    }
+}
+
+/// Whether the task's cron is due given its last recorded run. A schedule
+/// error is logged and counts as not due.
+async fn is_due(store: &Mutex<Store>, task: &str, expr: &str) -> bool {
+    let last = store.lock().await.last_run(task);
+    match schedule::is_due(expr, last, Local::now()) {
+        Ok(due) => due,
+        Err(e) => {
+            error!(task, "schedule error: {e:#}");
+            false
         }
     }
 }
