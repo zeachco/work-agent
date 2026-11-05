@@ -99,15 +99,31 @@ fn default_profile() -> PathBuf {
     config_home.join("work-agent").join("default")
 }
 
-/// `list`: every task with its schedule, last/next run and whether it is due now.
-fn print_schedule(cfg: &Config) -> Result<()> {
+type When = Option<chrono::DateTime<Local>>;
+
+/// Every enabled task with its last and next run, plus the `now` they were computed against.
+fn task_rows(cfg: &Config) -> Result<(chrono::DateTime<Local>, Vec<(ResolvedTask, When, When)>)> {
     let store = Store::load(&cfg.state_file)?;
     let now = Local::now();
+    let mut rows = Vec::new();
     for t in cfg.resolved_tasks() {
         let last = store.last_run(&t.name);
-        let (due, next) = match &t.schedule {
-            Some(s) => (schedule::is_due(s, last, now)?, schedule::next_after(s, last.unwrap_or(now))?),
-            None => (false, None),
+        let next = match &t.schedule {
+            Some(s) => schedule::next_after(s, last.unwrap_or(now))?,
+            None => None,
+        };
+        rows.push((t, last, next));
+    }
+    Ok((now, rows))
+}
+
+/// `list`: every task with its schedule, last/next run and whether it is due now.
+fn print_schedule(cfg: &Config) -> Result<()> {
+    let (now, rows) = task_rows(cfg)?;
+    for (t, last, next) in rows {
+        let due = match &t.schedule {
+            Some(s) => schedule::is_due(s, last, now)?,
+            None => false,
         };
         println!(
             "{:<24} {:<16} harness={:<7} parallel={:<5} last={} next={} {}",
@@ -167,16 +183,10 @@ fn shell_quote(s: &str) -> String {
 
 /// `run` with no name: the picker table for manual runs.
 fn print_runnable(cfg: &Config) -> Result<()> {
-    let store = Store::load(&cfg.state_file)?;
-    let now = Local::now();
+    let (_, rows) = task_rows(cfg)?;
     println!("{:<24} {:<20} {:<20} {:<28} {}", "TASK", "LAST RUN", "NEXT RUN", "HARNESS/MODEL", "DESCRIPTION");
-    for t in cfg.resolved_tasks() {
-        let last = store.last_run(&t.name);
-        let next = match &t.schedule {
-            Some(s) => schedule::next_after(s, last.unwrap_or(now))?,
-            None => None,
-        };
-        let fmt = |d: Option<chrono::DateTime<Local>>| {
+    for (t, last, next) in rows {
+        let fmt = |d: When| {
             d.map(|d| d.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_else(|| "never".into())
         };
         println!(
