@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use chrono::Local;
 use clap::{Parser, Subcommand};
 use config::{Config, ResolvedTask};
-use state::Store;
+use state::{Store, TaskState};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -281,11 +281,12 @@ async fn execute(task: ResolvedTask, cfg: &Config, store: Arc<Mutex<Store>>) {
         match exception::should_skip(&cfg.exception_llm, &rendered).await {
             Ok(true) => {
                 info!(task = %task.name, "skipped by exception rule");
-                let _ = store.lock().await.record(&task.name, |s| {
+                record(&store, &task.name, |s| {
                     s.last_run = Some(started);
                     s.last_skipped = Some(started);
                     s.last_outcome = Some("skipped".into());
-                });
+                })
+                .await;
                 return;
             }
             Ok(false) => {}
@@ -313,21 +314,29 @@ async fn execute(task: ResolvedTask, cfg: &Config, store: Arc<Mutex<Store>>) {
         }
     } else if !task.cwd.is_dir() {
         error!(task = %task.name, "cwd {} does not exist, refusing to run", task.cwd.display());
-        let _ = store.lock().await.record(&task.name, |s| {
+        record(&store, &task.name, |s| {
             s.last_run = Some(started);
             s.last_outcome = Some("failed: cwd missing".into());
-        });
+        })
+        .await;
         return;
     }
     info!(task = %task.name, harness = %task.harness, cwd = %task.cwd.display(), "running");
     // Mark the start first so a crash mid-run does not retrigger the task on restart.
-    let _ = store.lock().await.record(&task.name, |s| {
+    record(&store, &task.name, |s| {
         s.last_run = Some(started);
         s.last_outcome = Some("running".into());
-    });
+    })
+    .await;
     let outcome = match runner::run(&task, &prompt).await {
         Ok(o) => { info!(task = %task.name, %o, "done"); o }
         Err(e) => { error!(task = %task.name, "failed: {e:#}"); format!("error: {e:#}") }
     };
-    let _ = store.lock().await.record(&task.name, |s| s.last_outcome = Some(outcome));
+    record(&store, &task.name, |s| s.last_outcome = Some(outcome)).await;
+}
+
+/// Updates one task's persisted state. A failed write is deliberately ignored:
+/// the run itself must not fail because state.json could not be saved.
+async fn record(store: &Mutex<Store>, task: &str, f: impl FnOnce(&mut TaskState)) {
+    let _ = store.lock().await.record(task, f);
 }
