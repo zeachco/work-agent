@@ -56,40 +56,44 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let cli = Cli::parse();
-    if let Some(Cmd::Service(args)) = cli.cmd {
-        return service::run(args);
-    }
-    let cfg = Config::load(&cli.profile)?;
-
+    // Loaded per arm: `service` manages other profiles and must not need this one.
+    let load = || Config::load(&cli.profile);
     match cli.cmd.unwrap_or(Cmd::Daemon) {
-        Cmd::Check => {
-            let mut missing = 0;
-            for t in cfg.resolved_tasks() {
-                if t.cwd != t.workstation && !t.cwd.is_dir() {
-                    eprintln!("warning: task `{}` cwd {} does not exist", t.name, t.cwd.display());
-                    missing += 1;
-                }
-            }
-            println!("ok: {} task(s) in profile {}", cfg.tasks.len(), cfg.profile.display());
-            if missing > 0 {
-                anyhow::bail!("{missing} task(s) point at a missing cwd");
-            }
-        }
-        Cmd::List => print_schedule(&cfg)?,
-        Cmd::Show => show_task(&cfg)?,
-        Cmd::Run { name: None } => print_runnable(&cfg)?,
-        Cmd::Run { name: Some(name) } => {
-            let task = cfg
-                .resolved_tasks()
-                .into_iter()
-                .find(|t| t.name == name)
-                .ok_or_else(|| anyhow::anyhow!("no enabled task named `{name}`"))?;
-            let store = Arc::new(Mutex::new(Store::load(&cfg.state_file)?));
-            execute(task, &cfg, store).await;
-        }
-        Cmd::Daemon => daemon(cfg, cli.profile).await?,
-        Cmd::Service(_) => unreachable!("handled before loading the profile"),
+        Cmd::Check => check(&load()?),
+        Cmd::List => print_schedule(&load()?),
+        Cmd::Show => show_task(&load()?),
+        Cmd::Run { name: None } => print_runnable(&load()?),
+        Cmd::Run { name: Some(name) } => run_one(&load()?, &name).await,
+        Cmd::Daemon => daemon(load()?, cli.profile).await,
+        Cmd::Service(args) => service::run(args),
     }
+}
+
+/// `check`: the config loaded, so report it, and warn about every cwd that does not exist.
+fn check(cfg: &Config) -> Result<()> {
+    let mut missing = 0;
+    for t in cfg.resolved_tasks() {
+        if t.cwd != t.workstation && !t.cwd.is_dir() {
+            eprintln!("warning: task `{}` cwd {} does not exist", t.name, t.cwd.display());
+            missing += 1;
+        }
+    }
+    println!("ok: {} task(s) in profile {}", cfg.tasks.len(), cfg.profile.display());
+    if missing > 0 {
+        anyhow::bail!("{missing} task(s) point at a missing cwd");
+    }
+    Ok(())
+}
+
+/// `run <name>`: one task now, schedule and exception rule ignored.
+async fn run_one(cfg: &Config, name: &str) -> Result<()> {
+    let task = cfg
+        .resolved_tasks()
+        .into_iter()
+        .find(|t| t.name == name)
+        .ok_or_else(|| anyhow::anyhow!("no enabled task named `{name}`"))?;
+    let store = Arc::new(Mutex::new(Store::load(&cfg.state_file)?));
+    execute(task, cfg, store).await;
     Ok(())
 }
 
