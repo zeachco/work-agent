@@ -87,26 +87,9 @@ fn install(profiles: &[PathBuf], keep_others: bool) -> Result<()> {
     let dir = unit_dir()?;
     std::fs::create_dir_all(&dir)?;
     for (profile, unit) in &wanted {
-        let body = format!(
-            "[Unit]\n\
-             Description=work-agent daemon ({})\n\
-             After=default.target\n\
-             \n\
-             [Service]\n\
-             ExecStart={} --profile {} daemon\n\
-             Environment=PATH={}\n\
-             Restart=on-failure\n\
-             RestartSec=10\n\
-             \n\
-             [Install]\n\
-             WantedBy=default.target\n",
-            profile.display(),
-            exe.display(),
-            profile.display(),
-            path,
-        );
         let file = dir.join(unit);
-        std::fs::write(&file, body).with_context(|| format!("writing {}", file.display()))?;
+        std::fs::write(&file, render_unit(profile, &exe, &path))
+            .with_context(|| format!("writing {}", file.display()))?;
     }
     systemctl(&["daemon-reload"])?;
     for (profile, unit) in &wanted {
@@ -133,6 +116,28 @@ fn remove_unit(unit: &str) -> Result<()> {
 }
 
 /// Every `work-agent-*.service` file in the user unit folder.
+/// The systemd user unit text for one profile's daemon.
+fn render_unit(profile: &Path, exe: &Path, path_env: &str) -> String {
+    format!(
+        "[Unit]\n\
+         Description=work-agent daemon ({})\n\
+         After=default.target\n\
+         \n\
+         [Service]\n\
+         ExecStart={} --profile {} daemon\n\
+         Environment=PATH={}\n\
+         Restart=on-failure\n\
+         RestartSec=10\n\
+         \n\
+         [Install]\n\
+         WantedBy=default.target\n",
+        profile.display(),
+        exe.display(),
+        profile.display(),
+        path_env,
+    )
+}
+
 fn installed_units() -> Result<Vec<String>> {
     let dir = unit_dir()?;
     let entries = match std::fs::read_dir(&dir) {
