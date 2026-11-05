@@ -1,7 +1,7 @@
 //! The daemon loop: a tick every `tick_seconds`, hot reload of the profile,
 //! and one `execute` per due task (spawned when the task is `parallel`).
 use crate::config::Config;
-use crate::execute;
+use crate::execute::execute;
 use crate::schedule;
 use crate::state::Store;
 use anyhow::Result;

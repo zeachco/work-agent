@@ -1,5 +1,7 @@
 mod config;
+mod daemon;
 mod exception;
+mod execute;
 mod herdr;
 mod runner;
 mod schedule;
@@ -12,12 +14,12 @@ use anyhow::{Context, Result};
 use chrono::Local;
 use clap::{Parser, Subcommand};
 use config::{Config, ResolvedTask};
-use state::{Store, TaskState};
-use std::path::{Path, PathBuf};
+use daemon::daemon;
+use execute::execute;
+use state::Store;
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::SystemTime;
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
 
 #[derive(Parser)]
 #[command(name = "work-agent", version, about = "Scheduled agent-task orchestrator")]
@@ -203,156 +205,4 @@ fn print_runnable(cfg: &Config) -> Result<()> {
         );
     }
     Ok(())
-}
-
-async fn daemon(cfg: Config, profile: PathBuf) -> Result<()> {
-    let store = Arc::new(Mutex::new(Store::load(&cfg.state_file)?));
-    let mut cfg = Arc::new(cfg);
-    let mut last_modified = modified_at(&profile);
-    info!(profile = %cfg.profile.display(), tasks = cfg.tasks.len(), tick = cfg.tick_seconds, "work-agent daemon started");
-    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
-    loop {
-        ticker.tick().await;
-        if let Some(fresh) = reload_if_changed(&profile, &mut last_modified) {
-            cfg = Arc::new(fresh);
-            ticker = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
-            ticker.tick().await; // first tick of a new interval fires immediately
-        }
-        // One full pass over the tasks, in config order. Serial tasks block the
-        // pass; `parallel: true` tasks are detached and the pass moves on.
-        for task in cfg.resolved_tasks() {
-            // Manual tasks (no schedule) are never due here; only `run <name>` starts them.
-            let Some(expr) = task.schedule.as_deref() else { continue };
-            let due = {
-                let s = store.lock().await;
-                match schedule::is_due(expr, s.last_run(&task.name), Local::now()) {
-                    Ok(d) => d,
-                    Err(e) => { error!(task = %task.name, "schedule error: {e:#}"); false }
-                }
-            };
-            if !due {
-                continue;
-            }
-            if task.parallel {
-                let (cfg, store) = (cfg.clone(), store.clone());
-                tokio::spawn(async move { execute(task, &cfg, store).await });
-            } else {
-                execute(task, &cfg, store.clone()).await;
-            }
-        }
-    }
-}
-
-/// Picks up edits to the profile's `config.toml` and any file added, removed
-/// or changed under its `tasks/`. A broken config keeps the last good one
-/// (returns None); tasks already running keep the config they started with.
-fn reload_if_changed(profile: &Path, last_modified: &mut Fingerprint) -> Option<Config> {
-    let modified = modified_at(profile);
-    if modified == *last_modified {
-        return None;
-    }
-    *last_modified = modified;
-    match Config::load(profile) {
-        Ok(fresh) => {
-            info!(tasks = fresh.tasks.len(), "config reloaded");
-            Some(fresh)
-        }
-        Err(e) => {
-            error!("config reload failed, keeping previous: {e:#}");
-            None
-        }
-    }
-}
-
-/// Every source file with its modification time; `None` for an unreadable one.
-type Fingerprint = Vec<(PathBuf, Option<SystemTime>)>;
-
-fn modified_at(profile: &Path) -> Fingerprint {
-    Config::source_files(profile)
-        .into_iter()
-        .map(|p| {
-            let m = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
-            (p, m)
-        })
-        .collect()
-}
-
-/// Evaluates the exception rule, runs the task and records the outcome.
-async fn execute(task: ResolvedTask, cfg: &Config, store: Arc<Mutex<Store>>) {
-    let started = Local::now();
-    if skipped_by_exception(&task, cfg).await {
-        record(&store, &task.name, |s| {
-            s.last_run = Some(started);
-            s.last_skipped = Some(started);
-            s.last_outcome = Some("skipped".into());
-        })
-        .await;
-        return;
-    }
-    let prompt = build_prompt(&task, cfg);
-    // The default cwd is the workstation; command tasks skip `prepare` above, so make sure it exists.
-    if task.cwd == task.workstation {
-        if let Err(e) = std::fs::create_dir_all(&task.cwd) {
-            warn!(task = %task.name, "cannot create workstation cwd {}: {e}", task.cwd.display());
-        }
-    } else if !task.cwd.is_dir() {
-        error!(task = %task.name, "cwd {} does not exist, refusing to run", task.cwd.display());
-        record(&store, &task.name, |s| {
-            s.last_run = Some(started);
-            s.last_outcome = Some("failed: cwd missing".into());
-        })
-        .await;
-        return;
-    }
-    info!(task = %task.name, harness = %task.harness, cwd = %task.cwd.display(), "running");
-    // Mark the start first so a crash mid-run does not retrigger the task on restart.
-    record(&store, &task.name, |s| {
-        s.last_run = Some(started);
-        s.last_outcome = Some("running".into());
-    })
-    .await;
-    let outcome = match runner::run(&task, &prompt).await {
-        Ok(o) => { info!(task = %task.name, %o, "done"); o }
-        Err(e) => { error!(task = %task.name, "failed: {e:#}"); format!("error: {e:#}") }
-    };
-    record(&store, &task.name, |s| s.last_outcome = Some(outcome)).await;
-}
-
-/// Asks the exception LLM whether the task's `exception` rule says to skip
-/// this run. No rule, or a failed check, means run.
-async fn skipped_by_exception(task: &ResolvedTask, cfg: &Config) -> bool {
-    let Some(rule) = &task.exception else { return false };
-    let rendered = template::render(rule, &task.name, &task.workstation, &cfg.holidays);
-    match exception::should_skip(&cfg.exception_llm, &rendered).await {
-        Ok(true) => {
-            info!(task = %task.name, "skipped by exception rule");
-            true
-        }
-        Ok(false) => false,
-        Err(e) => {
-            warn!(task = %task.name, "exception check failed, running anyway: {e:#}");
-            false
-        }
-    }
-}
-
-/// The rendered prompt with the workstation preamble when the workstation
-/// could be prepared. Command tasks carry no prompt; the workstation note
-/// only matters to agents.
-fn build_prompt(task: &ResolvedTask, cfg: &Config) -> String {
-    let Some(raw) = &task.prompt else { return String::new() };
-    let body = template::render(raw, &task.name, &task.workstation, &cfg.holidays);
-    match workstation::prepare(&task.workstation) {
-        Ok(()) => workstation::with_preamble(&body, &task.workstation),
-        Err(e) => {
-            warn!(task = %task.name, "workstation unavailable, prompting without it: {e:#}");
-            body
-        }
-    }
-}
-
-/// Updates one task's persisted state. A failed write is deliberately ignored:
-/// the run itself must not fail because state.json could not be saved.
-async fn record(store: &Mutex<Store>, task: &str, f: impl FnOnce(&mut TaskState)) {
-    let _ = store.lock().await.record(task, f);
 }
