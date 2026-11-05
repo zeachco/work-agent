@@ -276,37 +276,16 @@ fn modified_at(profile: &Path) -> Fingerprint {
 /// Evaluates the exception rule, runs the task and records the outcome.
 async fn execute(task: ResolvedTask, cfg: &Config, store: Arc<Mutex<Store>>) {
     let started = Local::now();
-    if let Some(rule) = &task.exception {
-        let rendered = template::render(rule, &task.name, &task.workstation, &cfg.holidays);
-        match exception::should_skip(&cfg.exception_llm, &rendered).await {
-            Ok(true) => {
-                info!(task = %task.name, "skipped by exception rule");
-                record(&store, &task.name, |s| {
-                    s.last_run = Some(started);
-                    s.last_skipped = Some(started);
-                    s.last_outcome = Some("skipped".into());
-                })
-                .await;
-                return;
-            }
-            Ok(false) => {}
-            Err(e) => warn!(task = %task.name, "exception check failed, running anyway: {e:#}"),
-        }
+    if skipped_by_exception(&task, cfg).await {
+        record(&store, &task.name, |s| {
+            s.last_run = Some(started);
+            s.last_skipped = Some(started);
+            s.last_outcome = Some("skipped".into());
+        })
+        .await;
+        return;
     }
-    // Command tasks carry no prompt; the workstation note only matters to agents.
-    let prompt = match &task.prompt {
-        Some(raw) => {
-            let body = template::render(raw, &task.name, &task.workstation, &cfg.holidays);
-            match workstation::prepare(&task.workstation) {
-                Ok(()) => workstation::with_preamble(&body, &task.workstation),
-                Err(e) => {
-                    warn!(task = %task.name, "workstation unavailable, prompting without it: {e:#}");
-                    body
-                }
-            }
-        }
-        None => String::new(),
-    };
+    let prompt = build_prompt(&task, cfg);
     // The default cwd is the workstation; command tasks skip `prepare` above, so make sure it exists.
     if task.cwd == task.workstation {
         if let Err(e) = std::fs::create_dir_all(&task.cwd) {
@@ -333,6 +312,39 @@ async fn execute(task: ResolvedTask, cfg: &Config, store: Arc<Mutex<Store>>) {
         Err(e) => { error!(task = %task.name, "failed: {e:#}"); format!("error: {e:#}") }
     };
     record(&store, &task.name, |s| s.last_outcome = Some(outcome)).await;
+}
+
+/// Asks the exception LLM whether the task's `exception` rule says to skip
+/// this run. No rule, or a failed check, means run.
+async fn skipped_by_exception(task: &ResolvedTask, cfg: &Config) -> bool {
+    let Some(rule) = &task.exception else { return false };
+    let rendered = template::render(rule, &task.name, &task.workstation, &cfg.holidays);
+    match exception::should_skip(&cfg.exception_llm, &rendered).await {
+        Ok(true) => {
+            info!(task = %task.name, "skipped by exception rule");
+            true
+        }
+        Ok(false) => false,
+        Err(e) => {
+            warn!(task = %task.name, "exception check failed, running anyway: {e:#}");
+            false
+        }
+    }
+}
+
+/// The rendered prompt with the workstation preamble when the workstation
+/// could be prepared. Command tasks carry no prompt; the workstation note
+/// only matters to agents.
+fn build_prompt(task: &ResolvedTask, cfg: &Config) -> String {
+    let Some(raw) = &task.prompt else { return String::new() };
+    let body = template::render(raw, &task.name, &task.workstation, &cfg.holidays);
+    match workstation::prepare(&task.workstation) {
+        Ok(()) => workstation::with_preamble(&body, &task.workstation),
+        Err(e) => {
+            warn!(task = %task.name, "workstation unavailable, prompting without it: {e:#}");
+            body
+        }
+    }
 }
 
 /// Updates one task's persisted state. A failed write is deliberately ignored:
