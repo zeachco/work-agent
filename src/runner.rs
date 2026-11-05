@@ -1,5 +1,5 @@
 use crate::config::{ResolvedTask, Runner};
-use crate::herdr::{create_workspace, find_agent, find_workspace, herdr_json, pick, shell_pane, start_agent, workspace_label};
+use crate::herdr::{close_if_wanted, create_workspace, find_agent, find_workspace, herdr_json, pick, shell_pane, start_agent, workspace_label};
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 use std::process::Stdio;
@@ -30,11 +30,7 @@ async fn run_command(task: &ResolvedTask) -> Result<String> {
         .await
         .context("herdr pane run")?;
     wait_until_settled(task, &pane).await?;
-    if task.close_workspace_on_done {
-        if let Err(e) = herdr_json(&["workspace", "close", &ws]).await {
-            tracing::warn!(task = %task.name, "failed to close workspace: {e:#}");
-        }
-    }
+    close_if_wanted(task, &ws).await;
     Ok("settled".into())
 }
 
@@ -123,11 +119,7 @@ async fn prompt_and_finish(task: &ResolvedTask, agent: &str, workspace_id: &str,
     .await;
 
     // Close before propagating a prompt failure so the workspace is not leaked.
-    if task.close_workspace_on_done {
-        if let Err(e) = herdr_json(&["workspace", "close", workspace_id]).await {
-            tracing::warn!(task = %task.name, "failed to close workspace: {e:#}");
-        }
-    }
+    close_if_wanted(task, workspace_id).await;
     let v = result?;
     Ok(pick(&v, &["result", "status"])
         .or_else(|| pick(&v, &["result", "state"]))

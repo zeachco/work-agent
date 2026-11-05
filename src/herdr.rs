@@ -83,6 +83,17 @@ pub(crate) async fn start_agent(task: &ResolvedTask, agent: &str, pane_id: &str)
     herdr_json(&argv).await.context("herdr agent start").map(|_| ())
 }
 
+/// Closes the task's workspace when `close_workspace_on_done` asks for it;
+/// a failure is only logged so it never masks the run's own outcome.
+pub(crate) async fn close_if_wanted(task: &ResolvedTask, workspace_id: &str) {
+    if !task.close_workspace_on_done {
+        return;
+    }
+    if let Err(e) = herdr_json(&["workspace", "close", workspace_id]).await {
+        tracing::warn!(task = %task.name, "failed to close workspace: {e:#}");
+    }
+}
+
 pub(crate) async fn herdr_json(args: &[&str]) -> Result<Value> {
     tracing::debug!(?args, "herdr");
     let out = Command::new("herdr")
