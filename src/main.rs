@@ -63,7 +63,17 @@ async fn main() -> Result<()> {
 
     match cli.cmd.unwrap_or(Cmd::Daemon) {
         Cmd::Check => {
+            let mut missing = 0;
+            for t in cfg.resolved_tasks() {
+                if t.cwd != t.workstation && !t.cwd.is_dir() {
+                    eprintln!("warning: task `{}` cwd {} does not exist", t.name, t.cwd.display());
+                    missing += 1;
+                }
+            }
             println!("ok: {} task(s) in profile {}", cfg.tasks.len(), cfg.profile.display());
+            if missing > 0 {
+                anyhow::bail!("{missing} task(s) point at a missing cwd");
+            }
         }
         Cmd::List => print_schedule(&cfg)?,
         Cmd::Show => show_task(&cfg)?,
@@ -290,6 +300,19 @@ async fn execute(task: ResolvedTask, cfg: &Config, store: Arc<Mutex<Store>>) {
         }
         None => String::new(),
     };
+    // The default cwd is the workstation; command tasks skip `prepare` above, so make sure it exists.
+    if task.cwd == task.workstation {
+        if let Err(e) = std::fs::create_dir_all(&task.cwd) {
+            warn!(task = %task.name, "cannot create workstation cwd {}: {e}", task.cwd.display());
+        }
+    } else if !task.cwd.is_dir() {
+        error!(task = %task.name, "cwd {} does not exist, refusing to run", task.cwd.display());
+        let _ = store.lock().await.record(&task.name, |s| {
+            s.last_run = Some(started);
+            s.last_outcome = Some("failed: cwd missing".into());
+        });
+        return;
+    }
     info!(task = %task.name, harness = %task.harness, cwd = %task.cwd.display(), "running");
     // Mark the start first so a crash mid-run does not retrigger the task on restart.
     let _ = store.lock().await.record(&task.name, |s| {

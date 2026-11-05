@@ -96,7 +96,8 @@ files is added, changed or removed.
 
 Per task file: `prompt` (required for the `herdr` and `process` runners),
 `command` (required for the `command` runner), optional `description`,
-`schedule` (5 or 6 field cron), `harness`, `args`, `cwd`, `parallel`
+`schedule` (5 or 6 field cron), `harness`, `args`, `cwd` (defaults to the
+task's workstation; a configured `cwd` must exist or the run is refused), `parallel`
 (default false), `exception`, `runner`, `timeout_seconds`,
 `close_workspace_on_done`, `fresh_workspace`, `enabled`.
 

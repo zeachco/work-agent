@@ -50,7 +50,8 @@ pub struct Defaults {
     pub harness: String,
     /// Extra arguments passed to the harness after `--`.
     pub args: Vec<String>,
-    /// Default working directory for tasks.
+    /// Default working directory for tasks. Omitted: each task runs from its
+    /// own workstation directory.
     pub cwd: Option<PathBuf>,
     /// `herdr` (spawn a workspace + interactive agent), `process` (plain
     /// subprocess) or `command` (run a shell line directly in a herdr pane).
@@ -129,7 +130,7 @@ pub struct Task {
     pub prompt: Option<String>,
     /// Shell line run directly in a herdr pane by the `command` runner.
     pub command: Option<String>,
-    /// Directory the harness is started from.
+    /// Directory the harness is started from. Omitted: the task's workstation.
     pub cwd: Option<PathBuf>,
     /// Allow this task to run alongside others (default: false, strictly one at a time).
     #[serde(default)]
@@ -374,6 +375,7 @@ impl Config {
             .map(|t| {
                 let runner = t.runner.unwrap_or(d.runner);
                 let is_command = runner == Runner::Command;
+                let workstation = self.workstations_dir.join(&t.name);
                 ResolvedTask {
                     name: t.name.clone(),
                     profile: self.profile.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -382,10 +384,8 @@ impl Config {
                     args: if is_command { Vec::new() } else { t.args.clone().unwrap_or_else(|| d.args.clone()) },
                     prompt: t.prompt.clone(),
                     command: t.command.clone(),
-                    cwd: t.cwd.clone().or_else(|| d.cwd.clone()).unwrap_or_else(|| {
-                        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-                    }),
-                    workstation: self.workstations_dir.join(&t.name),
+                    cwd: t.cwd.clone().or_else(|| d.cwd.clone()).unwrap_or_else(|| workstation.clone()),
+                    workstation,
                     parallel: t.parallel,
                     schedule: t.schedule.clone(),
                     exception: t.exception.clone(),
