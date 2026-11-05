@@ -32,22 +32,14 @@ pub struct ServiceArgs {
 
 pub fn run(args: ServiceArgs) -> Result<()> {
     if args.status {
-        let units = if args.profiles.is_empty() {
-            installed_units()?
-        } else {
-            args.profiles.iter().map(|p| unit_name(p)).collect::<Result<_>>()?
-        };
+        let units = target_units(&args, args.profiles.is_empty())?;
         anyhow::ensure!(!units.is_empty(), "no work-agent service installed");
         let mut argv = vec!["status", "--no-pager"];
         argv.extend(units.iter().map(String::as_str));
         return systemctl(&argv);
     }
     if args.uninstall {
-        let units = if args.all {
-            installed_units()?
-        } else {
-            args.profiles.iter().map(|p| unit_name(p)).collect::<Result<_>>()?
-        };
+        let units = target_units(&args, args.all)?;
         if units.is_empty() {
             println!("no work-agent service installed");
         }
@@ -57,6 +49,15 @@ pub fn run(args: ServiceArgs) -> Result<()> {
         return systemctl(&["daemon-reload"]);
     }
     install(&args.profiles, args.keep_others)
+}
+
+/// Every installed unit when `use_installed`, otherwise one unit per given profile.
+fn target_units(args: &ServiceArgs, use_installed: bool) -> Result<Vec<String>> {
+    if use_installed {
+        installed_units()
+    } else {
+        args.profiles.iter().map(|p| unit_name(p)).collect()
+    }
 }
 
 fn install(profiles: &[PathBuf], keep_others: bool) -> Result<()> {
