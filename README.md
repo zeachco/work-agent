@@ -23,12 +23,25 @@ different one:
   state.json         # last-run timestamps, written by the daemon (gitignored)
 ```
 
-`--profile <dir>` or `WORK_AGENT_PROFILE` selects the folder; the default
-is `~/.config/work-agent/default`. A path that does not exist yet is created
-with `tasks/`, `workstations/` and the `.gitignore` above, ready for
-`git init`. `examples/` is a complete profile you can run as is.
+`--profile <dir>` or `WORK_AGENT_PROFILE` selects the folder. With neither, the
+**current folder is the profile** when it looks like one (it has a `tasks/`
+folder or a `config.toml`), so working inside a profile folder needs no path;
+else the default is `~/.config/work-agent/default`. A path that does not exist
+yet is created with `tasks/`, `workstations/` and the `.gitignore` above, ready
+for `git init`. `examples/` is a complete profile you can run as is.
 
 ## Run
+
+Inside a profile folder, every command works on it:
+
+```sh
+cd ~/dev/work-agent-configs/stay22
+work-agent                          # install this folder as a service (see below)
+work-agent daemon                   # ... or run the daemon here, in the foreground
+work-agent list                     # this folder's tasks, no --profile needed
+```
+
+Anywhere else, with the default profile:
 
 ```sh
 mkdir -p ~/.config/work-agent/default/tasks
@@ -45,13 +58,26 @@ cargo run -- --profile ~/agent-profiles/work daemon   # another profile, e.g. a 
 
 ## Run as a service
 
-`work-agent service <profile>...` installs the binary that runs it as systemd
-user units, one per profile path. Paths are scaffolded when missing. The
+Bare `work-agent` **inside a profile folder** installs that folder as a systemd
+user service and links the skills (see [Skills](#skills)) into it: the whole
+deploy of a profile in one word, safe to rerun any time.
+
+```sh
+cd ~/dev/work-agent-configs/stay22
+work-agent                          # -> work-agent-stay22.service, enabled and running
+work-agent                          # again: reinstalled, skills relinked, nothing duplicated
+```
+
+It validates the profile first (a bad task file writes nothing), never removes
+or restarts the daemons of other profiles, and prints the journal command. With
+paths, `work-agent service <profile>...` installs the binary that runs it as
+systemd user units, one per profile. Paths are scaffolded when missing. The
 installed daemons become exactly the paths you pass: any other
 `work-agent-*.service` is removed first, unless `--keep-others`:
 
 ```sh
 cargo install --path .                                        # puts work-agent on your PATH
+cd ~/dev/work-agent-configs/stay22 && work-agent              # install the folder you are in
 work-agent service ~/.config/work-agent/default               # one daemon: work-agent-default.service
 work-agent service ~/.config/wa ~/dev/some-private-config     # two daemons, the default one is removed
 work-agent service ~/profiles/other --keep-others             # add a third, keep the rest
@@ -64,9 +90,31 @@ journalctl --user -fu work-agent-wa.service                   # logs
 From a checkout, `cargo service ...` (alias in `.cargo/config.toml`) does the
 same with a release build of the working tree. Units are named after the
 profile folder, so two profiles must not share a folder name. Each unit
-points at the binary that installed it, so rerun `service` after reinstalling
-or rebuilding (it restarts the daemons). It captures your current `PATH` so
-`herdr` and the harnesses resolve the same way they do in your shell.
+points at the binary that installed it, so rerun it (`work-agent` in the
+folder, or `work-agent service <profile>`) after reinstalling or rebuilding; it
+restarts the daemons. It captures your current `PATH` so `herdr` and the
+harnesses resolve the same way they do in your shell. `work-agent service` with
+no path installs, and with `--uninstall` removes, the profile in hand.
+
+## Skills
+
+The skills that belong to a profile (`add-task`, kept in this repo's
+`.claude/skills/`) are not copied into it: installing a profile drops a
+**symlink** to them, in both places a harness looks. `.agents/skills`, because
+pi reads it from the working directory up through its ancestors, which covers
+every task workstation under the profile; and `.claude/skills`, for claude. One
+copy, edited in one place, true everywhere at once:
+
+```sh
+cd ~/dev/work-agent-configs/stay22 && work-agent
+# skills: .../stay22/.agents/skills -> ~/dev/work-agent/.claude/skills (pi)
+# skills: .../stay22/.claude/skills -> ~/dev/work-agent/.claude/skills (claude)
+```
+
+The links go into the profile's `.gitignore` (a one-time file to commit), so a
+profile repository stays clean. A folder of your own in either place is left
+alone with a warning, never deleted. `WORK_AGENT_SKILLS` points the links at
+another skills folder when the binary was not built from this checkout.
 
 `RUST_LOG=debug` shows every herdr call. The daemon must itself run inside a
 herdr session (or on a machine where `herdr` can reach the running server)

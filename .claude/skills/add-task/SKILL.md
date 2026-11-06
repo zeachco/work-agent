@@ -5,8 +5,9 @@ description: Add a scheduled agent task to a work-agent profile (one TOML file p
 
 # Add a task to work-agent
 
-Tasks are not in this repo: they live in a **profile folder**, selected with
-`--profile <dir>` or `WORK_AGENT_PROFILE` and defaulting to
+Tasks are not in this repo: they live in a **profile folder** — the folder you
+are working in when it has a `tasks/` folder or a `config.toml`, otherwise
+`--profile <dir>` / `WORK_AGENT_PROFILE`, otherwise
 `~/.config/work-agent/default` (the user may name another one, e.g. a private
 repo checkout with `work/` and `personal/` profiles). Each task is one TOML
 file, `<profile>/tasks/<frequency>-<domain>-<task>.toml`, with examples in
@@ -22,13 +23,15 @@ and `<task>` is a specific snake_case action. For example:
 
 ## Steps
 
-1. Find the profile (`$WORK_AGENT_PROFILE`, else `~/.config/work-agent/default`,
-   unless the user names one) and look at its `tasks/` for the existing names
-   and at a neighbour file for style.
+1. Find the profile (the current folder when it is one, else
+   `$WORK_AGENT_PROFILE`, else `~/.config/work-agent/default`, unless the user
+   names one) and look at its `tasks/` for the existing names and at a neighbour
+   file for style.
 2. Write `<profile>/tasks/<frequency>-<domain>-<task>.toml` using the naming convention above.
-3. Validate: `cargo run -- check` (add `--profile <dir>` when it is not the default).
-4. Confirm the schedule: `cargo run -- list` (shows last / next run; manual tasks show `manual`).
-5. Optionally force a run: `cargo run -- run <frequency>-<domain>-<task>`.
+3. Validate: `work-agent check` (add `--profile <dir>` when you are not in the
+   profile folder; `cargo run -- check` when running from a checkout).
+4. Confirm the schedule: `work-agent list` (shows last / next run; manual tasks show `manual`).
+5. Optionally force a run: `work-agent run <frequency>-<domain>-<task>`.
 
 A running daemon picks the new file up on its next tick; no restart needed.
 
@@ -37,10 +40,10 @@ A running daemon picks the new file up on its next tick; no restart needed.
 | field | required | meaning |
 |---|---|---|
 | file name | yes | `<frequency>-<domain>-<task>.toml`, with a stem matching `[a-z][a-z0-9_-]{0,31}`; also the herdr agent name |
-| `schedule` | no | cron, 5 fields `m h dom mon dow` or 6 fields with leading seconds. Omit it for a **manual task**: never run by the daemon, only via `cargo run -- run <name>` |
+| `schedule` | no | cron, 5 fields `m h dom mon dow` or 6 fields with leading seconds. Omit it for a **manual task**: never run by the daemon, only via `work-agent run <name>` |
 | `prompt` | for `herdr`/`process` | what the agent does; supports placeholders (below) |
 | `command` | for `command` | shell line sent straight to a herdr pane, no agent involved |
-| `description` | no | one-line summary shown by `cargo run -- run` (no name), which lists all runnable tasks |
+| `description` | no | one-line summary shown by `work-agent run` (no name), which lists all runnable tasks |
 | `cwd` | no | directory the harness starts in (falls back to `defaults.cwd`) |
 | `harness` | no | `pi` (default), `claude`, `codex`, ... anything `herdr agent start --kind` accepts |
 | `args` | no | replaces `defaults.args` entirely, e.g. `["--model", "claude-sonnet-5-5"]` |
@@ -130,5 +133,8 @@ description = "Rotate app logs"
   use `fresh_workspace: true` (or `parallel`) if overlapping runs are wanted.
 - Never write tasks, config or workstation files into this repo; they belong
   to the profile. Keep `examples/` generic and free of secrets.
+- A profile folder installed with `work-agent` has `.agents/skills` and
+  `.claude/skills` symlinks into this repo, which is how this skill is
+  reachable from there. Edit the skills here, never through the link.
 - Anything the agent should keep across runs belongs in its workstation, not
   in the working tree it operates on.

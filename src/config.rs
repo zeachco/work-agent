@@ -159,6 +159,13 @@ pub fn user_config_home() -> Option<PathBuf> {
 
 pub const CONFIG_FILE: &str = "config.toml";
 
+/// Whether a folder is one work-agent keeps a profile in: its task files, or a
+/// global config. Lets the current folder stand in for `--profile`, so
+/// `cd ~/configs/stay22 && work-agent list` needs no path.
+pub fn looks_like_profile(dir: &Path) -> bool {
+    dir.join(default_tasks_dir()).is_dir() || dir.join(CONFIG_FILE).is_file()
+}
+
 /// What a profile keeps out of git: daemon state and the per-task scratch
 /// files that are either sensitive (`short_memory.md`) or disposable. Written
 /// once, when the profile folder is created; existing files are left alone.

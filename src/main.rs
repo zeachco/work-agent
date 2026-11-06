@@ -6,6 +6,7 @@ mod herdr;
 mod runner;
 mod schedule;
 mod service;
+mod skills;
 mod state;
 mod template;
 mod workstation;
@@ -26,16 +27,19 @@ use tokio::sync::Mutex;
 struct Cli {
     /// Profile folder: `config.toml` (optional), `tasks/`, `workstations/` and
     /// `state.json` live there, outside this repo, so a profile can be its own
-    /// (private) repository and one checkout can hold several of them.
-    #[arg(short, long, env = "WORK_AGENT_PROFILE", default_value_os_t = default_profile())]
-    profile: PathBuf,
+    /// (private) repository and one checkout can hold several of them. Defaults
+    /// to the current folder when it looks like a profile (it has a `tasks/`
+    /// folder or a `config.toml`), else `$XDG_CONFIG_HOME/work-agent/default`.
+    #[arg(short, long, env = "WORK_AGENT_PROFILE")]
+    profile: Option<PathBuf>,
     #[command(subcommand)]
     cmd: Option<Cmd>,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Run forever, cycling through due tasks (default).
+    /// Run forever, cycling through due tasks. The default command everywhere
+    /// except inside a profile folder, where bare `work-agent` installs instead.
     Daemon,
     /// Print each task with its next due time and exit.
     List,
@@ -48,7 +52,8 @@ enum Cmd {
     /// Validate the config and exit.
     Check,
     /// Install the daemon as a systemd user service, one per profile path given
-    /// (`--uninstall` / `--status` to remove or inspect them).
+    /// (`--uninstall` / `--status` to remove or inspect them). With no path, the
+    /// profile in hand: bare `work-agent` in a profile folder is the same install.
     Service(service::ServiceArgs),
 }
 
@@ -58,9 +63,18 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let cli = Cli::parse();
-    let profile = crate::config::expand_home(&cli.profile);
+    let (profile, source) = resolved_profile(cli.profile.as_deref());
+    // A profile folder is a deployment, so bare `work-agent` inside one installs
+    // it rather than running a daemon here: `work-agent daemon` (or a unit file
+    // that stops when you close the terminal) is the foreground case.
+    if cli.cmd.is_none() && source == Source::Cwd {
+        return service::install_here(&profile);
+    }
     // Loaded per arm: `service` manages other profiles and must not need this one.
     let load = || Config::load(&profile);
+    // `service` with no path acts on this profile, but only when someone named
+    // one: falling back to a service for the built-in default would be a guess.
+    let fallback = (source != Source::Default).then(|| profile.clone());
     match cli.cmd.unwrap_or(Cmd::Daemon) {
         Cmd::Check => check(&load()?),
         Cmd::List => print_schedule(&load()?),
@@ -68,7 +82,30 @@ async fn main() -> Result<()> {
         Cmd::Run { name: None } => print_runnable(&load()?),
         Cmd::Run { name: Some(name) } => run_one(&load()?, &name).await,
         Cmd::Daemon => daemon(load()?, profile.clone()).await,
-        Cmd::Service(args) => service::run(args),
+        Cmd::Service(args) => service::run(args, fallback),
+    }
+}
+
+/// Where the profile folder came from.
+#[derive(PartialEq)]
+enum Source {
+    /// `--profile` or `WORK_AGENT_PROFILE`: named by the user.
+    Given,
+    /// The current folder, because it looks like a profile.
+    Cwd,
+    /// Neither: `$XDG_CONFIG_HOME/work-agent/default`.
+    Default,
+}
+
+/// The profile to act on, and where it came from: `--profile` (or its env
+/// variable), else the current folder when that is a profile, else the default.
+fn resolved_profile(flag: Option<&std::path::Path>) -> (PathBuf, Source) {
+    if let Some(profile) = flag {
+        return (config::expand_home(profile), Source::Given);
+    }
+    match std::env::current_dir().ok().filter(|dir| config::looks_like_profile(dir)) {
+        Some(dir) => (dir, Source::Cwd),
+        None => (default_profile(), Source::Default),
     }
 }
 
