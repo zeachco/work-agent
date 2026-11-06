@@ -262,11 +262,16 @@ impl Config {
         let mut seen = std::collections::HashSet::new();
         for t in &self.tasks {
             anyhow::ensure!(seen.insert(&t.name), "duplicate task name `{}`", t.name);
+            let max_len = if t.fresh_workspace.unwrap_or(self.defaults.fresh_workspace) {
+                MAX_FRESH_TASK_NAME_LEN
+            } else {
+                MAX_TASK_NAME_LEN
+            };
             anyhow::ensure!(
-                valid_name(&t.name),
+                valid_name(&t.name, max_len),
                 "task file name `{}.toml` must match [a-z][a-z0-9_-]{{0,{}}}",
                 t.name,
-                MAX_TASK_NAME_LEN - 1
+                max_len - 1
             );
             if let Some(schedule) = &t.schedule {
                 crate::schedule::parse(schedule)
@@ -335,13 +340,17 @@ fn load_tasks(dir: &Path) -> Result<Vec<Task>> {
         .collect()
 }
 
-/// Upper bound on a task name (the file stem, also used as the herdr agent name).
+/// Upper bound on a task name: herdr caps an agent name at 32 characters and
+/// the task name is the agent name.
 const MAX_TASK_NAME_LEN: usize = 32;
+/// `fresh_workspace` runs name the agent `<task>-MMDD-HHMM` instead, so those
+/// task names must leave room for the 10-character suffix.
+const MAX_FRESH_TASK_NAME_LEN: usize = MAX_TASK_NAME_LEN - "-MMDD-HHMM".len();
 
-fn valid_name(s: &str) -> bool {
+fn valid_name(s: &str, max_len: usize) -> bool {
     let mut chars = s.chars();
     matches!(chars.next(), Some('a'..='z'))
-        && s.len() <= MAX_TASK_NAME_LEN
+        && s.len() <= max_len
         && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '_' | '-'))
 }
 
