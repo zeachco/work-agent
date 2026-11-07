@@ -30,7 +30,8 @@ and `<task>` is a specific snake_case action. For example:
 2. Write `<profile>/tasks/<frequency>-<domain>-<task>.toml` using the naming convention above.
 3. Validate: `work-agent check` (add `--profile <dir>` when you are not in the
    profile folder; `cargo run -- check` when running from a checkout).
-4. Confirm the schedule: `work-agent list` (shows last / next run; manual tasks show `manual`).
+4. Confirm the schedule: `work-agent list` (shows last / next run, the run
+   status streak, and `manual` for unscheduled tasks).
 5. Optionally force a run: `work-agent run <frequency>-<domain>-<task>`.
 
 A running daemon picks the new file up on its next tick; no restart needed.

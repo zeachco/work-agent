@@ -1,23 +1,18 @@
-//! One task run: exception check, prompt build, cwd check, state marks and
-//! the runner call.
+//! One task run: exception check, prompt build, cwd check, the runner call and
+//! the state marks around it all.
 use crate::config::{Config, ResolvedTask};
-use crate::state::{Store, TaskState};
+use crate::state::{Store, TaskState, Verdict};
 use crate::{exception, runner, template, workstation};
 use chrono::Local;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
-/// Evaluates the exception rule, runs the task and records the outcome.
+/// Evaluates the exception rule, runs the task and records the verdict it got.
 pub async fn execute(task: ResolvedTask, cfg: &Config, store: Arc<Mutex<Store>>) {
     let started = Local::now();
     if skipped_by_exception(&task, cfg).await {
-        record(&store, &task.name, |s| {
-            s.last_run = Some(started);
-            s.last_skipped = Some(started);
-            s.last_outcome = Some("skipped".into());
-        })
-        .await;
+        record(&store, &task.name, |s| s.mark_skipped(started, "skipped")).await;
         return;
     }
     let prompt = build_prompt(&task, cfg);
@@ -28,25 +23,18 @@ pub async fn execute(task: ResolvedTask, cfg: &Config, store: Arc<Mutex<Store>>)
         }
     } else if !task.cwd.is_dir() {
         error!(task = %task.name, "cwd {} does not exist, refusing to run", task.cwd.display());
-        record(&store, &task.name, |s| {
-            s.last_run = Some(started);
-            s.last_outcome = Some("failed: cwd missing".into());
-        })
-        .await;
+        record(&store, &task.name, |s| s.mark_finished(started, Verdict::Failure, "failed: cwd missing"))
+            .await;
         return;
     }
     info!(task = %task.name, harness = %task.harness, cwd = %task.cwd.display(), "running");
     // Mark the start first so a crash mid-run does not retrigger the task on restart.
-    record(&store, &task.name, |s| {
-        s.last_run = Some(started);
-        s.last_outcome = Some("running".into());
-    })
-    .await;
-    let outcome = match runner::run(&task, &prompt).await {
-        Ok(o) => { info!(task = %task.name, %o, "done"); o }
-        Err(e) => { error!(task = %task.name, "failed: {e:#}"); format!("error: {e:#}") }
+    record(&store, &task.name, |s| s.mark_running(started)).await;
+    let (verdict, outcome) = match runner::run(&task, &prompt).await {
+        Ok(o) => { info!(task = %task.name, %o, "done"); (Verdict::Success, o) }
+        Err(e) => { error!(task = %task.name, "failed: {e:#}"); (Verdict::Failure, format!("error: {e:#}")) }
     };
-    record(&store, &task.name, |s| s.last_outcome = Some(outcome)).await;
+    record(&store, &task.name, |s| s.mark_finished(started, verdict, outcome)).await;
 }
 
 /// Asks the exception LLM whether the task's `exception` rule says to skip

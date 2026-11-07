@@ -20,7 +20,7 @@ different one:
   config.toml        # global settings, optional (built-in defaults otherwise)
   tasks/<name>.toml  # one file per task; the file stem is the task name
   workstations/      # per-task memory boards, created by the daemon
-  state.json         # last-run timestamps, written by the daemon (gitignored)
+  state.json         # last-run times, streaks, running pid: written by the daemon (gitignored)
 ```
 
 `--profile <dir>` or `WORK_AGENT_PROFILE` selects the folder. With neither, the
@@ -48,10 +48,10 @@ mkdir -p ~/.config/work-agent/default/tasks
 cp examples/config.toml ~/.config/work-agent/default/           # global settings
 cp examples/tasks/daily-standup-notes.toml ~/.config/work-agent/default/tasks/
 cargo run -- check                 # validate config and every task file
-cargo run -- list                  # show schedule / last run / next run
+cargo run -- list                  # schedule, last run, streak, next run, and what is due
 cargo run -- run daily-standup-notes   # force one task now
 cargo run -- run release-notes         # start a manual task (no schedule)
-cargo run -- run                       # list runnable tasks: last/next run, harness/model, description
+cargo run -- run                       # list runnable tasks: status, last/next run, harness/model, description
 cargo run                          # daemon (same as `cargo run -- daemon`)
 cargo run -- --profile ~/agent-profiles/work daemon   # another profile, e.g. a private repo checkout
 ```
@@ -170,6 +170,26 @@ task files (with the file as preview) and opens the pick in `$VISUAL`,
 Prompts and exception rules accept `${date}`, `${time}`, `${datetime}`,
 `${weekday}`, `${holidays}`, `${task}`, `${workstation}`.
 
+## Status
+
+`list`, and `run` with no name, show how each task's last executions went and
+whether one is in flight right now:
+
+```text
+TASK                     SCHEDULE       HARNESS PAR   LAST RUN          NEXT RUN          DUE  STATUS
+nightly-webdev-deploy    0 5 * * *      pi      false 2026-11-06 05:00  2026-11-07 05:00       3 successes in a row
+hourly-mail-digest       0 * * * *      pi      false 2026-11-06 17:00  2026-11-06 18:00  DUE  2 failures in a row (running now)
+manual-webdev-release    manual         claude  false never             -                      never ran
+```
+
+A streak counts consecutive runs with the same verdict and lives in
+`state.json` (`streak`, `last_result`): three successes and then a failure
+reads `1 failure in a row`, and a run the `exception` rule skipped leaves the
+count alone. A task that only ever got skipped reads `never ran, skipped last`.
+The `(running now)` suffix comes from the pid the run recorded in `state.json`,
+checked against `/proc`, so a task left marked by a daemon that died does not
+look busy forever.
+
 ## Workstations
 
 Every task owns `<profile>/workstations/<name>/`, a memory board that
@@ -202,4 +222,4 @@ the first is `google-calendar` (today / week / range / search as text or JSON).
 3. `<profile>/workstations/<name>/` is created if missing and the prompt gets the workstation preamble.
 4. If an agent named `<name>` is still alive it is prompted directly (a run is refused while it is still `working`). Otherwise the `cron:<profile>/<name>` workspace is reused when still open (a free pane, or a new split), and only then `herdr workspace create --cwd <cwd>`. Then `herdr agent start <name> --kind <harness> -- <args>` → `herdr agent prompt <name> "<prompt>" --wait`. With `fresh_workspace: true` every run gets its own `cron:<profile>/<name>:<MM-DD HH:MM>` workspace and agent.
    `command` runner tasks skip the agent entirely: the `command` line is sent to a shell pane of the same `cron:<profile>/<name>` workspace with `herdr pane run`, and the run settles when the pane's foreground process returns to its shell (polled via `herdr pane process-info`, bounded by `timeout_seconds`). The pane stays in your herdr session the whole time, so interactive prompts — e.g. `sudo`'s password — can be answered by hand.
-5. The outcome is written to the state file and the loop moves to the next task.
+5. The task is marked `running` in `state.json` — with its pid — before it starts, so a crash mid-run cannot retrigger it on restart, and its verdict then extends the task's streak in the state file the loop moves on from.

@@ -41,7 +41,7 @@ enum Cmd {
     /// Run forever, cycling through due tasks. The default command everywhere
     /// except inside a profile folder, where bare `work-agent` installs instead.
     Daemon,
-    /// Print each task with its next due time and exit.
+    /// Print each task with its schedule, last run, run status and next due time, then exit.
     List,
     /// Pick a task with fzf (previewing its file) and open it in $VISUAL/$EDITOR, or nvim.
     Show,
@@ -145,39 +145,57 @@ fn default_profile() -> PathBuf {
 
 type When = Option<chrono::DateTime<Local>>;
 
-/// Every enabled task with its last and next run, plus the `now` they were computed against.
-fn task_rows(cfg: &Config) -> Result<(chrono::DateTime<Local>, Vec<(ResolvedTask, When, When)>)> {
+/// One row of the `list` / `run` tables: a task with its timestamps, the status
+/// of its last execution and whether it is due, all computed against one `now`.
+struct Row {
+    task: ResolvedTask,
+    last: When,
+    next: When,
+    /// `never ran`, `3 successes in a row`, `2 failures in a row (running now)`.
+    status: String,
+    due: bool,
+}
+
+/// Every enabled task with what both tables show for it.
+fn task_rows(cfg: &Config) -> Result<Vec<Row>> {
     let store = Store::load(&cfg.state_file)?;
     let now = Local::now();
     let mut rows = Vec::new();
-    for t in cfg.resolved_tasks() {
-        let last = store.last_run(&t.name);
-        let next = match &t.schedule {
-            Some(s) => schedule::next_after(s, last.unwrap_or(now))?,
-            None => None,
+    for task in cfg.resolved_tasks() {
+        let last = store.last_run(&task.name);
+        let (next, due) = match &task.schedule {
+            Some(s) => (schedule::next_after(s, last.unwrap_or(now))?, schedule::is_due(s, last, now)?),
+            None => (None, false),
         };
-        rows.push((t, last, next));
+        let status = store.status_label(&task.name);
+        rows.push(Row { task, last, next, status, due });
     }
-    Ok((now, rows))
+    Ok(rows)
 }
 
-/// `list`: every task with its schedule, last/next run and whether it is due now.
+/// `YYYY-MM-DD HH:MM`, else `none`: `never` for a run that has not happened,
+/// `-` for a task with no schedule to compute a next run from.
+fn stamp(d: When, none: &str) -> String {
+    d.map(|d| d.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_else(|| none.into())
+}
+
+/// `list`: every task with its schedule, last run, streak, next run and whether it is due now.
 fn print_schedule(cfg: &Config) -> Result<()> {
-    let (now, rows) = task_rows(cfg)?;
-    for (t, last, next) in rows {
-        let due = match &t.schedule {
-            Some(s) => schedule::is_due(s, last, now)?,
-            None => false,
-        };
+    println!(
+        "{:<24} {:<14} {:<7} {:<5} {:<17} {:<17} {:<4} STATUS",
+        "TASK", "SCHEDULE", "HARNESS", "PAR", "LAST RUN", "NEXT RUN", "DUE"
+    );
+    for r in task_rows(cfg)? {
         println!(
-            "{:<24} {:<16} harness={:<7} parallel={:<5} last={} next={} {}",
-            t.name,
-            t.schedule.as_deref().unwrap_or("manual"),
-            t.harness,
-            t.parallel,
-            last.map(|d| d.to_rfc3339()).unwrap_or_else(|| "never".into()),
-            next.map(|d| d.to_rfc3339()).unwrap_or_else(|| "-".into()),
-            if due { "DUE" } else { "" }
+            "{:<24} {:<14} {:<7} {:<5} {:<17} {:<17} {:<4} {}",
+            r.task.name,
+            r.task.schedule.as_deref().unwrap_or("manual"),
+            r.task.harness,
+            r.task.parallel,
+            stamp(r.last, "never"),
+            stamp(r.next, "-"),
+            if r.due { "DUE" } else { "" },
+            r.status
         );
     }
     Ok(())
@@ -227,19 +245,19 @@ fn shell_quote(s: &str) -> String {
 
 /// `run` with no name: the picker table for manual runs.
 fn print_runnable(cfg: &Config) -> Result<()> {
-    let (_, rows) = task_rows(cfg)?;
-    println!("{:<24} {:<20} {:<20} {:<28} {}", "TASK", "LAST RUN", "NEXT RUN", "HARNESS/MODEL", "DESCRIPTION");
-    for (t, last, next) in rows {
-        let fmt = |d: When| {
-            d.map(|d| d.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_else(|| "never".into())
-        };
+    println!(
+        "{:<24} {:<32} {:<17} {:<17} {:<28} DESCRIPTION",
+        "TASK", "STATUS", "LAST RUN", "NEXT RUN", "HARNESS/MODEL"
+    );
+    for r in task_rows(cfg)? {
         println!(
-            "{:<24} {:<20} {:<20} {:<28} {}",
-            t.name,
-            fmt(last),
-            fmt(next),
-            format!("{}/{}", t.harness, t.model().unwrap_or("-")),
-            t.description.as_deref().unwrap_or(""),
+            "{:<24} {:<32} {:<17} {:<17} {:<28} {}",
+            r.task.name,
+            r.status,
+            stamp(r.last, "never"),
+            stamp(r.next, "-"),
+            format!("{}/{}", r.task.harness, r.task.model().unwrap_or("-")),
+            r.task.description.as_deref().unwrap_or(""),
         );
     }
     Ok(())
