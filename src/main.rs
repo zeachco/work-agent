@@ -3,6 +3,7 @@ mod daemon;
 mod exception;
 mod execute;
 mod herdr;
+mod hooks;
 mod runner;
 mod schedule;
 mod service;
@@ -16,7 +17,7 @@ use chrono::Local;
 use clap::{Parser, Subcommand};
 use config::{Config, ResolvedTask};
 use daemon::daemon;
-use execute::execute;
+use execute::{execute, Gates};
 use state::Store;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,9 +47,16 @@ enum Cmd {
     /// Pick a task with fzf (previewing its file) and open it in $VISUAL/$EDITOR, or nvim.
     Show,
     /// Run one task immediately, ignoring its schedule and exception rule.
+    /// Its `preflight` and `validate` gates still apply, unless --ignore-gates.
     /// This is the only way to start a task that has no `schedule` (manual task).
     /// Without a name, lists every runnable task instead.
-    Run { name: Option<String> },
+    Run {
+        name: Option<String>,
+        /// Run the task whatever its `preflight` says, and take the runner's own
+        /// word for the outcome instead of running `validate`.
+        #[arg(long)]
+        ignore_gates: bool,
+    },
     /// Validate the config and exit.
     Check,
     /// Install the daemon as a systemd user service, one per profile path given
@@ -79,8 +87,11 @@ async fn main() -> Result<()> {
         Cmd::Check => check(&load()?),
         Cmd::List => print_schedule(&load()?),
         Cmd::Show => show_task(&load()?),
-        Cmd::Run { name: None } => print_runnable(&load()?),
-        Cmd::Run { name: Some(name) } => run_one(&load()?, &name).await,
+        Cmd::Run { name: None, .. } => print_runnable(&load()?),
+        Cmd::Run { name: Some(name), ignore_gates } => {
+            let gates = if ignore_gates { Gates::Off } else { Gates::All };
+            run_one(&load()?, &name, gates).await
+        }
         Cmd::Daemon => daemon(load()?, profile.clone()).await,
         Cmd::Service(args) => service::run(args, fallback),
     }
@@ -125,15 +136,16 @@ fn check(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-/// `run <name>`: one task now, schedule and exception rule ignored.
-async fn run_one(cfg: &Config, name: &str) -> Result<()> {
+/// `run <name>`: one task now, schedule and exception rule ignored (and the
+/// gates too with `--ignore-gates`).
+async fn run_one(cfg: &Config, name: &str, gates: Gates) -> Result<()> {
     let task = cfg
         .resolved_tasks()
         .into_iter()
         .find(|t| t.name == name)
         .ok_or_else(|| anyhow::anyhow!("no enabled task named `{name}`"))?;
     let store = Arc::new(Mutex::new(Store::load(&cfg.state_file)?));
-    execute(task, cfg, store).await;
+    execute(task, cfg, store, gates).await;
     Ok(())
 }
 

@@ -14,7 +14,7 @@ pub struct State {
 }
 
 /// Whether a run that really executed the task worked. A skip is deliberately
-/// not a verdict: a task held off before it started has neither succeeded nor
+/// not a verdict: a task held off by its `preflight` has neither succeeded nor
 /// failed, it has just not run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -41,7 +41,7 @@ pub struct TaskState {
     /// Human-readable tail of the last event: a runner status, a skip reason,
     /// or `running` while a run is in flight.
     pub last_outcome: Option<String>,
-    /// Set when the `exception` rule dropped a scheduled run.
+    /// Set when the `exception` rule or a failing `preflight` dropped a run.
     pub last_skipped: Option<DateTime<Local>>,
     /// Verdict of the last run that executed the task. Absent for a task that
     /// only ever skipped, and in state files written before this field existed.
@@ -78,7 +78,7 @@ impl TaskState {
         self.running_pid = None;
     }
 
-    /// Records a run dropped before it started (`exception` rule). It
+    /// Records a dropped run (`exception` rule or a failing `preflight`). It
     /// moves the cron anchor so the task is not retried this tick, but does not
     /// touch the streak: nothing ran, so there is nothing to judge.
     pub fn mark_skipped(&mut self, started: DateTime<Local>, outcome: impl Into<String>) {
@@ -256,16 +256,16 @@ mod tests {
         let mut s = TaskState::default();
         s.mark_finished(now(), Verdict::Success, "settled");
         s.mark_finished(now(), Verdict::Success, "settled");
-        s.mark_skipped(now(), "skipped: nothing to do today");
+        s.mark_skipped(now(), "skipped: preflight test -f /nope exited 1");
         assert_eq!(s.status_label(), "2 successes in a row, skipped last");
         s.mark_finished(now(), Verdict::Success, "settled");
         assert_eq!(s.status_label(), "3 successes in a row");
     }
 
     #[test]
-    fn a_task_only_ever_skipped_has_never_ran() {
+    fn a_task_only_ever_gated_has_never_ran() {
         let mut s = TaskState::default();
-        s.mark_skipped(now(), "skipped: exception said yes");
+        s.mark_skipped(now(), "skipped: preflight false exited 1");
         assert_eq!(s.status_label(), "never ran, skipped last");
         assert_eq!(s.verdict(), None);
     }

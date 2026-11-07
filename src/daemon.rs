@@ -1,7 +1,7 @@
 //! The daemon loop: a tick every `tick_seconds`, hot reload of the profile,
 //! and one `execute` per due task (spawned when the task is `parallel`).
 use crate::config::Config;
-use crate::execute::execute;
+use crate::execute::{execute, Gates};
 use crate::schedule;
 use crate::state::Store;
 use anyhow::Result;
@@ -36,9 +36,9 @@ pub async fn daemon(cfg: Config, profile: PathBuf) -> Result<()> {
             }
             if task.parallel {
                 let (cfg, store) = (cfg.clone(), store.clone());
-                tokio::spawn(async move { execute(task, &cfg, store).await });
+                tokio::spawn(async move { execute(task, &cfg, store, Gates::All).await });
             } else {
-                execute(task, &cfg, store.clone()).await;
+                execute(task, &cfg, store.clone(), Gates::All).await;
             }
         }
     }

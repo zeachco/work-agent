@@ -49,7 +49,8 @@ cp examples/config.toml ~/.config/work-agent/default/           # global setting
 cp examples/tasks/daily-standup-notes.toml ~/.config/work-agent/default/tasks/
 cargo run -- check                 # validate config and every task file
 cargo run -- list                  # schedule, last run, streak, next run, and what is due
-cargo run -- run daily-standup-notes   # force one task now
+cargo run -- run daily-standup-notes   # force one task now (its gates still apply)
+cargo run -- run daily-standup-notes --ignore-gates   # ... and skip its preflight/validate too
 cargo run -- run release-notes         # start a manual task (no schedule)
 cargo run -- run                       # list runnable tasks: status, last/next run, harness/model, description
 cargo run                          # daemon (same as `cargo run -- daemon`)
@@ -141,12 +142,14 @@ files is added, changed or removed.
 | `defaults.close_workspace_on_done` | close the herdr workspace once the agent settles |
 | `defaults.fresh_workspace` | always create a new workspace labelled `cron:<profile>/<name>:<MM-DD HH:MM>` instead of reusing the task's (default `false`) |
 | `exception_llm` | OpenAI-compatible endpoint used to evaluate `exception` rules |
+| `preflight` | per task: shell line run before the run; a non-zero exit skips it (see [Gates](#gates)) |
+| `validate` | per task: shell line run after a run that looked good; a non-zero exit fails it |
 
 Per task file: `prompt` (required for the `herdr` and `process` runners),
 `command` (required for the `command` runner), optional `description`,
 `schedule` (5 or 6 field cron), `harness`, `args`, `cwd` (defaults to the
 task's workstation; a configured `cwd` must exist or the run is refused), `parallel`
-(default false), `exception`, `runner`, `timeout_seconds`,
+(default false), `exception`, `preflight`, `validate`, `runner`, `timeout_seconds`,
 `close_workspace_on_done`, `fresh_workspace`, `enabled`.
 
 ```toml
@@ -167,8 +170,49 @@ other but the daemon never starts it. Only `work-agent run <name>` does.
 task files (with the file as preview) and opens the pick in `$VISUAL`,
 `$EDITOR`, or `nvim`.
 
-Prompts and exception rules accept `${date}`, `${time}`, `${datetime}`,
+Prompts, exception rules and gates accept `${date}`, `${time}`, `${datetime}`,
 `${weekday}`, `${holidays}`, `${task}`, `${workstation}`.
+
+## Gates
+
+Two optional shell lines wrap a run, and for them the exit code is a verdict
+rather than a crash:
+
+| key | when | a non-zero exit means |
+|---|---|---|
+| `preflight` | before the run | skip it: nothing ran, the task is looked at again on its next tick |
+| `validate` | after a run that looked good | it failed: the streak records a failure |
+
+Both run as `sh -c '<line>'` from the task's `cwd`, so a relative path points
+next to the task: a `preflight.sh` kept in the workstation runs as
+`bash ./preflight.sh`, and a literal multi-line string is a whole inline
+script. The `${...}` placeholders work here too, so a task with its own `cwd`
+can still reach its own scripts: `bash ${workstation}/check.sh`. Whatever the
+gate printed (stderr first) is kept with the verdict, in the log, in
+`state.json` and in `list`, so a gate explains itself:
+
+```toml
+# tasks/nightly-webdev-deploy_audit.toml
+schedule = "0 5 * * *"
+cwd = "~/projects/my-app"
+preflight = '''test -z "$(git status --porcelain)" || { echo "dirty tree" >&2; exit 1; }'''
+validate = "bash ./check-deploy-docs.sh"
+prompt = '''Audit the deploy docs and fix whatever drifted from the code.'''
+```
+
+`preflight` is checked before the `exception` rule: a shell test is cheap and
+deterministic, a local-model answer is neither. A skip is not a failure — it
+leaves the streak untouched, because nothing ran. `validate` runs only after a
+run that looked good, and that is its point: a `herdr` agent comes back
+`settled`, which says nothing about the work, so the gate is what turns it into
+a verdict. `work-agent run <name> --ignore-gates` runs the task whatever both
+answer.
+
+A refusal keeps the whole story on one line, wherever it is read:
+
+```text
+validate `bash ./check-deploy-docs.sh` exited 1: no deploy docs section in README
+```
 
 ## Status
 
@@ -184,11 +228,11 @@ manual-webdev-release    manual         claude  false never             -       
 
 A streak counts consecutive runs with the same verdict and lives in
 `state.json` (`streak`, `last_result`): three successes and then a failure
-reads `1 failure in a row`, and a run the `exception` rule skipped leaves the
-count alone. A task that only ever got skipped reads `never ran, skipped last`.
-The `(running now)` suffix comes from the pid the run recorded in `state.json`,
-checked against `/proc`, so a task left marked by a daemon that died does not
-look busy forever.
+reads `1 failure in a row`, and a skipped run leaves the count alone. A task
+that only ever got gated by its `preflight` reads `never ran, skipped last`.
+`(running now)`
+comes from the pid the run recorded in `state.json`, checked against `/proc`,
+so a task left marked by a daemon that died does not look busy forever.
 
 ## Workstations
 
@@ -218,8 +262,12 @@ the first is `google-calendar` (today / week / range / search as text or JSON).
 ## How a run works
 
 1. A task is due when a cron tick has elapsed since `last_run` (never-run tasks are due immediately).
-2. If it has an `exception`, the rendered rule is sent to the local model, which answers `SKIP` or `RUN`. An unreachable model never blocks a run.
-3. `<profile>/workstations/<name>/` is created if missing and the prompt gets the workstation preamble.
-4. If an agent named `<name>` is still alive it is prompted directly (a run is refused while it is still `working`). Otherwise the `cron:<profile>/<name>` workspace is reused when still open (a free pane, or a new split), and only then `herdr workspace create --cwd <cwd>`. Then `herdr agent start <name> --kind <harness> -- <args>` → `herdr agent prompt <name> "<prompt>" --wait`. With `fresh_workspace: true` every run gets its own `cron:<profile>/<name>:<MM-DD HH:MM>` workspace and agent.
+2. Its `cwd` is settled: the default (the task's workstation) is created if missing, a configured `cwd` that does not exist refuses the run and records a failure.
+3. If it has a `preflight`, that line runs in the `cwd`; a non-zero exit records a skip and the run ends there.
+4. If it has an `exception`, the rendered rule is sent to the local model, which answers `SKIP` or `RUN`. An unreachable model never blocks a run.
+5. The prompt is built and gets the workstation preamble.
+6. The task is marked `running` in `state.json` — with its pid — before it starts, so a crash mid-run cannot retrigger it on restart.
+7. If an agent named `<name>` is still alive it is prompted directly (a run is refused while it is still `working`). Otherwise the `cron:<profile>/<name>` workspace is reused when still open (a free pane, or a new split), and only then `herdr workspace create --cwd <cwd>`. Then `herdr agent start <name> --kind <harness> -- <args>` → `herdr agent prompt <name> "<prompt>" --wait`. With `fresh_workspace: true` every run gets its own `cron:<profile>/<name>:<MM-DD HH:MM>` workspace and agent.
    `command` runner tasks skip the agent entirely: the `command` line is sent to a shell pane of the same `cron:<profile>/<name>` workspace with `herdr pane run`, and the run settles when the pane's foreground process returns to its shell (polled via `herdr pane process-info`, bounded by `timeout_seconds`). The pane stays in your herdr session the whole time, so interactive prompts — e.g. `sudo`'s password — can be answered by hand.
-5. The task is marked `running` in `state.json` — with its pid — before it starts, so a crash mid-run cannot retrigger it on restart, and its verdict then extends the task's streak in the state file the loop moves on from.
+8. If it has a `validate` and the run looked good, that line runs in the `cwd`; a non-zero exit turns the outcome into a failure.
+9. The verdict extends the task's streak and the outcome is written to the state file, and the loop moves to the next task.

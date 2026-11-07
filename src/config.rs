@@ -141,6 +141,16 @@ pub struct Task {
     pub schedule: Option<String>,
     /// Optional small prompt evaluated by the local LLM; a "yes" answer skips this run.
     pub exception: Option<String>,
+    /// Shell line run with `sh -c` from the task's cwd before the run: a non-zero
+    /// exit skips it. Relative paths resolve against the task's cwd, so a script
+    /// can live next to the task and be run as `bash ./preflight.sh`. Task-only:
+    /// a gate says something about one task's work, there is nothing to default.
+    pub preflight: Option<String>,
+    /// Shell line run with `sh -c` from the task's cwd after a run that looked
+    /// good: a non-zero exit turns the run into a failure. This is how a `herdr`
+    /// agent run, whose "settled" status says nothing about the work, gets a
+    /// real verdict.
+    pub validate: Option<String>,
     pub runner: Option<Runner>,
     pub timeout_seconds: Option<u64>,
     pub close_workspace_on_done: Option<bool>,
@@ -277,6 +287,13 @@ impl Config {
                 crate::schedule::parse(schedule)
                     .with_context(|| format!("task `{}` has an invalid schedule", t.name))?;
             }
+            for (field, gate) in [("preflight", &t.preflight), ("validate", &t.validate)] {
+                anyhow::ensure!(
+                    !gate.as_deref().is_some_and(|line| line.trim().is_empty()),
+                    "task `{}` has an empty `{field}` (omit it instead)",
+                    t.name,
+                );
+            }
             if t.runner.unwrap_or(self.defaults.runner) == Runner::Command {
                 anyhow::ensure!(
                     t.command.is_some(),
@@ -373,6 +390,10 @@ pub struct ResolvedTask {
     /// `None` means manual: only `run <name>` starts it.
     pub schedule: Option<String>,
     pub exception: Option<String>,
+    /// Shell gate run before the task, if any (see `Task::preflight`).
+    pub preflight: Option<String>,
+    /// Shell gate run after the task, if any (see `Task::validate`).
+    pub validate: Option<String>,
     pub runner: Runner,
     pub timeout_seconds: u64,
     pub close_workspace_on_done: bool,
@@ -419,6 +440,8 @@ impl Config {
                     parallel: t.parallel,
                     schedule: t.schedule.clone(),
                     exception: t.exception.clone(),
+                    preflight: t.preflight.clone(),
+                    validate: t.validate.clone(),
                     runner,
                     timeout_seconds: t.timeout_seconds.unwrap_or(d.timeout_seconds),
                     close_workspace_on_done: t

@@ -51,15 +51,42 @@ A running daemon picks the new file up on its next tick; no restart needed.
 | `runner` | no | `herdr` (workspace + interactive agent, default), `process` (`harness -p prompt`) or `command` (run the `command` line directly in a herdr pane) |
 | `parallel` | no | `true` lets it run alongside other tasks; default is strictly one at a time |
 | `exception` | no | natural-language rule evaluated by the local LLM; a SKIP answer skips the run |
+| `preflight` | no | shell line run from `cwd` before the run; a non-zero exit skips it (see Gates) |
+| `validate` | no | shell line run from `cwd` after a run that looked good; a non-zero exit fails it |
 | `timeout_seconds` | no | max wall-clock for one run (default 3600) |
 | `close_workspace_on_done` | no | close the herdr workspace once the agent settles |
 | `fresh_workspace` | no | default `false`: reruns reuse the live `<name>` agent, else the still-open `cron:<name>` workspace, else create one. `true` creates a new `cron:<name>:<MM-DD HH:MM>` workspace and agent on every run |
 | `enabled` | no | default `true`; set `false` to keep a task without scheduling it |
 
-Placeholders usable in `prompt` and `exception`: `${date}` (YYYY-MM-DD),
+Placeholders usable in `prompt`, `exception` and the gates: `${date}` (YYYY-MM-DD),
 `${time}` (HH:MM), `${datetime}`, `${weekday}`, `${holidays}` (comma-joined
 config list), `${task}` (task name), `${workstation}` (the task's scratch dir,
 `<profile>/workstations/<name>/`).
+
+## Gates (`preflight` / `validate`)
+
+Each is one shell line, run as `sh -c '<line>'` from the task's `cwd`, where
+the exit code is a verdict: `preflight` non-zero **skips** the run (nothing
+ran, so the task's streak is untouched and it is tried again next tick),
+`validate` non-zero **fails** it. Both share the task's `timeout_seconds` and
+`cwd`, both accept the placeholders below, and both land trimmed to one line
+in the log, `state.json` and `list` together with what they printed — so a gate
+should print why it refused:
+
+```toml
+preflight = 'test -f ~/vpn-up || { echo "no vpn" >&2; exit 1; }'   # bash ./preflight.sh works too
+validate = '''
+npm run build --silent || { echo "build failed" >&2; exit 1; }
+'''
+```
+
+Use `preflight` for a precondition the task cannot do anything about (nothing
+to process, a dependency unreachable, a lock held by another job) and
+`validate` for the proof the work is right — especially on the `herdr` runner,
+whose `settled` status only says the agent stopped talking. A script can live
+in the task's workstation and be called by relative path (`bash ./check.sh`),
+but remember `memory.md` there is tracked in git while the rest is not.
+`work-agent run <name> --ignore-gates` runs the task whatever both answer.
 
 ## Workstation (memory board)
 
@@ -126,7 +153,11 @@ description = "Rotate app logs"
   Set `"enabled": false` while drafting if that is unwanted.
 - `args` is a full override, not a merge: repeat `--model` if you need it.
 - `exception` is only a guard; if the local LLM at `exception_llm.base_url`
-  is unreachable, the task runs anyway.
+  is unreachable, the task runs anyway. A `preflight` is a hard gate: it runs
+  first, and a non-zero exit really does skip the run.
+- A gate runs from `cwd`, not from the profile or the repo: `bash ./hooks.sh`
+  is the task's own `cwd/hooks.sh`. A gate that cannot start (typo, missing
+  `cwd`) counts as a refusal, never as a pass.
 - Prompts are passed as a single argument (no shell), so quotes are safe.
   Use a literal multi-line string (`'''...'''`) so backticks, quotes and
   `${...}` need no escaping; the newline right after the opening `'''` is dropped.

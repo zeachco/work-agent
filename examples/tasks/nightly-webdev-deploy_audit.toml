@@ -1,0 +1,13 @@
+schedule = '0 5 * * *'
+harness = 'claude'
+args = ['--model', 'claude-sonnet-5-5']
+cwd = '/Users/jane/projects/my-app'
+description = 'Audit the deploy docs; skipped on a dirty tree, failed if the build no longer works'
+preflight = '''test -z "$(git status --porcelain)" || { echo "dirty tree" >&2; exit 1; }'''
+validate = '''
+npm run build --silent || { echo "build broken" >&2; exit 1; }
+test -f docs/deploy.md
+'''
+prompt = '''
+Audit docs/deploy.md against the code in this repo and fix whatever drifted.
+Keep the list of docs you already checked in ${workstation}/memory.md.'''
